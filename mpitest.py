@@ -14,4 +14,4 @@ sol.sync("Extern")
 
 hdf5.write_solver_to_h5("mpitest-results.h5", sol)
 
-print sol.P
+sol.dbprint("Completed without error!")
