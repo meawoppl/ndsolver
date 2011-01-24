@@ -2,10 +2,11 @@ The formulation of this code is based off of the work of
 Dr. Robert Erdmann and Matthew Goodman.  If you use this 
 in a scholarly work the following citations would be appreciated:
 
-@article{erdmann2006image,
-  title={{Image-based numerical simulation of Stokes flow in porous media}},
-  author={Erdmann, R.G.},
-  year={2006}
+@phdthesis{erdmann_permeability_2006,
+       author = {R.G. Erdmann},
+       title = {Image-based numerical simulation of Stokes flow in porous media},
+       school = {The University of Arizona},
+       year = {2006}
 }
 
 @phdthesis{goodman2011properties,
