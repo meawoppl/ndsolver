@@ -25,7 +25,7 @@ class Solver():
         self.start_time = time.time()
 
 	# Set debugging flag
-	self.printlevel = printing
+        self.printlevel = printing
         self.dbcallback = dbcallback
 
         # Trilinos setup and iteration requires very different programmatic flow . . . 
@@ -47,7 +47,7 @@ class Solver():
         self.dbprint("Solver Instantiated", level = 2)
         
         # Default direction of pressure drop
-	self.dP = dP
+        self.dP = dP
 
         # I left this in here so you can manually 
         # disable Biot number based acceleration if desired
@@ -117,7 +117,7 @@ class Solver():
         # Stupid checks #
         #################        
         if self.ndim != len(self.dP):
-            raise ValueError("Solid Array and Pressure Drop do not have matching dimensions:\n\tself.ndim:%i\n\t%s" % (self.ndim, dP))
+            raise ValueError("Solid Array and Pressure Drop do not have matching dimensions:\n\tself.ndim:%i\n\t%s" % (self.ndim, self.dP))
 
         #################
         # FYI Printouts #
@@ -454,11 +454,11 @@ class Solver():
         self.V_LHS[dim] = self.VM_LU[dim].solve(self.V_RHS[dim])
 
     # pyamg
-    def _pyamg_P(self, *args, **kwargs):
-        self.P_LHS = self.PM_RUBE.solve(self.P_RHS, tol=1e-10)
-    def _pyamg_V(self, dim, *args, **kwargs):
-        self.V_LHS[dim] = self.VM_RUBE[dim].solve(rhs, tol=1e-10)
-
+    # def _pyamg_P(self, *args, **kwargs):
+    #     self.P_LHS = self.PM_RUBE.solve(self.P_RHS, tol=1e-10)
+    # def _pyamg_V(self, dim, *args, **kwargs):
+    #     self.V_LHS[dim] = self.VM_RUBE[dim].solve(rhs, tol=1e-10)
+        
     # pytrilinos
     # I expected it to converge more quickly using the
     # Previoud LHS as the first guess, but its def. 
@@ -579,24 +579,24 @@ class Solver():
 
         # Relies on pyamg for AMG solvers. Should be wicked fast breaks for large grids?
         # Need to add adjustable parameters for large and small systems . . .
-        # TODO: Currently crashes for large systems?
-        elif self.method == 'ruge':
-            import pyamg
-            self.dbprint("Setting up ruge_stuben_solver(s)", level=2)
-            self.dbprint("\t Pressure.tocsr()", level=2)
-            self.PM    = self.PM.tocsr()
-            self.dbprint("\t Pressure Stuben", level=2)
-            self.PM_RUBE = pyamg.ruge_stuben_solver( self.PM )
+        # TODO: Currently crashes so commented out . . .
+        # elif self.method == 'ruge':
+        #     import pyamg
+        #     self.dbprint("Setting up ruge_stuben_solver(s)", level=2)
+        #     self.dbprint("\t Pressure.tocsr()", level=2)
+        #     self.PM    = self.PM.tocsr()
+        #     self.dbprint("\t Pressure Stuben", level=2)
+        #     self.PM_RUBE = pyamg.ruge_stuben_solver( self.PM )
 
 
-            self.VM_RUBE = [None] * self.ndim
-            for dim in range(self.ndim):
-                self.dbprint("\t Velocity %i tocsr()" % dim, level=2)
-                self.VM[dim] = self.VM[dim].tocsr()
-                self.dbprint("\t Velocity %i -rube" % dim, level=2)
-                self.VM_RUBE[dim] = pyamg.ruge_stuben_solver( self.VM[dim] )
-            self.SOLVE_P = _pyamg_P
-            self.SOLVE_V = _pyamg_V
+        #     self.VM_RUBE = [None] * self.ndim
+        #     for dim in range(self.ndim):
+        #         self.dbprint("\t Velocity %i tocsr()" % dim, level=2)
+        #         self.VM[dim] = self.VM[dim].tocsr()
+        #         self.dbprint("\t Velocity %i -rube" % dim, level=2)
+        #         self.VM_RUBE[dim] = pyamg.ruge_stuben_solver( self.VM[dim] )
+        #     self.SOLVE_P = _pyamg_P
+        #     self.SOLVE_V = _pyamg_V
 
         elif self.method == "trilinos":
             self.dbprint("Using Trilinos!", level=2)
@@ -636,9 +636,6 @@ class Solver():
 
             self.SOLVE_P = self._trilinos_P
             self.SOLVE_V = self._trilinos_V
-        elif (self.method == "trilinos") and not have_trilinos:
-            self.dbprint("No Trilinos Detected!  Abort!", level = 0)
-            raise ValueError("No Trilinos Detected!  Abort!")
         else:
             self.dbprint("Solver type '%s' not recognized!!!!" % self.method, level = 0)
             raise ValueError("Solver type '%s' not recognized!!!!" % self.method)
@@ -895,7 +892,7 @@ class Solver():
         # Re-accumulate it from the various flow dimensions
         for d in range(self.ndim):
             self.mat_mult(self.DM[d], self.V_LHS[d], self.PTEMP)
-            self.D_LIN[:] += self.PTEMP
+            self.D_LIN[:] = self.D_LIN[:] + self.PTEMP
         
         # This is ok for all dimensions as 
         #     edge -> sa 
@@ -992,14 +989,14 @@ class Solver():
             ans = spsolve(self.MM, self.MM_rhs)
         elif self.method == "bicgstab":
             ans = self.bicgstab(self.MM, self.MM_rhs)
-        elif self.method == "ruge":
-            from pyamg import ruge_stuben_solver
-            self.dbprint("Setting up ruge_stuben_solver.", level=2)
-            self.rss = self.ruge_stuben_solver( self.MM, max_levels=2)
-            self.dbprint(self.rss)
-            ans = self.rss.solve(self.MM_rhs, tol=1e-10)
+        # elif self.method == "ruge":
+        #     from pyamg import ruge_stuben_solver
+        #     self.dbprint("Setting up ruge_stuben_solver.", level=2)
+        #     self.rss = self.ruge_stuben_solver( self.MM, max_levels=2)
+        #     self.dbprint(self.rss)
+        #     ans = self.rss.solve(self.MM_rhs, tol=1e-10)
         else:
-            dbprint("Solver method not supported!",0)
+            self.dbprint("Solver method not supported!",0)
             raise ValueError
         self.solve_time = time.time() - self.solve_start
 
@@ -1073,7 +1070,7 @@ class Solver():
         self.P_RHS[:] = self.DIV_MULT * self.D_LIN
         for d in range(self.ndim):
             self.mat_mult(self.ST[d], self.V_LHS[d], self.PTEMP)
-            self.P_RHS[:] += self.PTEMP
+            self.P_RHS[:] = self.P_RHS[:] + self.PTEMP
 
         # Divide by h and add PBC pressure corrections
         self.P_RHS[:] = (self.P_RHS / self.h) + self.P_COR
@@ -1160,17 +1157,17 @@ class Solver():
         self.force_la_setup()
         self.force_bc_setup()
 
-	self.update_D()
+        self.update_D()
 	# If the current solution is valid
         # (and it isn't the first iteration), break out
-	if self.I != 0 and self.max_D < stopping_div:
+        if self.I != 0 and self.max_D < stopping_div:
             return
 
         # Start the timer
         self.solve_start = time.time()
-	while True:
+        while True:
 	    # Perform an iteration
-	    self.iterate()
+            self.iterate()
 
             self.dbprint("\tUpdating Divergence" , level = 2)
             # Update the divergence and max divergence
@@ -1183,9 +1180,9 @@ class Solver():
             self.dbprint("Iteration:%i, Max Divergence:%e"  % ( self.I, self.max_D ) )
             
 	    # If it is time to break, do so
-	    if self.max_D < stopping_div:
+            if self.max_D < stopping_div:
                 self.solve_time = time.time() - self.solve_start
-		break
+                break
 
             # Alternative breaking criteria: exceeding iteration count
             if self.I >= max_iter:
