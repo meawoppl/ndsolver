@@ -29,7 +29,7 @@ def ndcodex(dim):
 # Pre-populate the codex . . . why not . . .
 global codex
 codex = {}
-for x in [2,3,4]:
+for x in [2,3]:
     codex[x] = ndcodex(x)
 
 
