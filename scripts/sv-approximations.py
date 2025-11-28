@@ -10,7 +10,7 @@ import matplotlib
 import matplotlib.patches
 from matplotlib.collections import PatchCollection
 
-from tables import openFile
+from tables import open_file
 
 matplotlib.rcParams['font.family'] = 'serif'
 matplotlib.rcParams['font.size'] = 14
@@ -165,7 +165,7 @@ appr3_sv = []
 radaii  = linspace(0.01,0.49,100)
 for rad in radaii:
     
-    print rad
+    print(rad)
     elements = 100
     h = 1/elements
     x, y = mgrid[-0.5:0.5:elements*1j,-0.5:0.5:elements*1j]
@@ -179,10 +179,10 @@ for rad in radaii:
     est2 = contour_sa_approx(s)  / (fl * elements)
     est3 = erode_dilate_approx(s) / fl
 
-    print "Real:", rl
-    print "Appr1:", est1
-    print "Appr2:", est2
-    print "Appr3:", est3
+    print(f"Real: {rl}")
+    print(f"Appr1: {est1}")
+    print(f"Appr2: {est2}")
+    print(f"Appr3: {est3}")
 
     real_sv.append(rl)
     appr1_sv.append(est1)

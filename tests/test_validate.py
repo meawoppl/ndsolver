@@ -1,12 +1,12 @@
-from scipy import *
+import numpy as np
+from numpy import (allclose, all, array, arctan2, around, byte, c_, dot,
+                   linspace, mgrid, ones, outer, pi, roll, sin, sqrt, zeros)
 from scipy import linalg
-from core import Solver
-from symbolic import ndim_eq
-import hdf5
+from ndsolver.core import Solver
+from ndsolver.symbolic import ndim_eq
+from ndsolver import hdf5
+import tables
 import time
-# from pylab import *
-
-from tables import openFile
 
 test_matrix = zeros((5,5))
 test_matrix[2,2] = 1
@@ -42,25 +42,26 @@ def perp(u, v):
    '''
    return u - proj(u, v)
 
-def oblique_111cylinder(): 
-    axis = array([1., 1., 1.]) # cylinder axis
+def oblique_111cylinder():
+    axis = array([1., 1., 1.])  # cylinder axis
     axis /= linalg.norm(axis)
 
     res = 10
     radius = 0.3
-    
-    z, y, x = mgrid[0:1:res*1j,0:1:res*1j,0:1:res*1j]
+
+    z, y, x = mgrid[0:1:res*1j, 0:1:res*1j, 0:1:res*1j]
     coords = c_[x.flat, y.flat, z.flat]
-    
+
     s = zeros(x.shape, dtype=byte)
-    
-    for x in [0., 1.]:
-        for y in [0., 1.]:
-            for z in [0., 1.]:
-                if x+y+z == 3:
+
+    for xi in [0., 1.]:
+        for yi in [0., 1.]:
+            for zi in [0., 1.]:
+                if xi + yi + zi == 3:
                     continue
-                dc = coords - array([x, y, z])
-                s += 1*(array(map(linalg.norm, perp(dc,axis))).reshape((res, res, res)) <= radius)
+                dc = coords - array([xi, yi, zi])
+                norms = array([linalg.norm(p) for p in perp(dc, axis)])
+                s += 1 * (norms.reshape((res, res, res)) <= radius)
     return s
 
 def clear_autotest_h5():
@@ -68,33 +69,33 @@ def clear_autotest_h5():
    system("rm autotest.h5")
 
 def test_2d(sol_method='default'):
-   print "Testing 2d iterative"
-   sol = Solver(test_matrix, (1,0), sol_method=sol_method, printing = 2)
-   sol.converge(max_iter = 10)
+   print("Testing 2d iterative")
+   sol = Solver(test_matrix, (1,0), sol_method=sol_method)
+   sol.converge(max_iter=10)
 
    clear_autotest_h5()
    hdf5.write_solver_to_h5("autotest.h5", sol)
 
    # Reading is threadsafe!
-   h5 = openFile("autotest.h5")
+   h5 = tables.open_file("autotest.h5")
    test_P = h5.root.simulations.x_sim.P[:]
    h5.close()
 
    if not allclose(sol.P, correct_P):
-      print "Incorrect:"
-      print sol.P
-      print
-      print "Correct:"
-      print correct_P
-      raise ValueError, "Incorrect answer for 2-d test case\n See 'autotest.h5'"
+      print("Incorrect:")
+      print(sol.P)
+      print()
+      print("Correct:")
+      print(correct_P)
+      raise ValueError("Incorrect answer for 2-d test case\n See 'autotest.h5'")
    else:
-      print "Test Successful!!!"
+      print("Test Successful!!!")
       clear_autotest_h5()
-      
+
    return sol
 
 def shift_test(sol_method='default'):
-   print "Testing 2d shifting"
+   print("Testing 2d shifting")
 
    for x in range(5):
       for y in range(5):
@@ -107,16 +108,15 @@ def shift_test(sol_method='default'):
          rolled_v = roll(correct_v, x, axis=0)
          rolled_v = roll(rolled_v, y, axis=1)
 
-         sol = Solver(rolled_solid, (1,0), sol_method=sol_method, printing = 2)
-         sol.converge(max_iter = 5)
+         sol = Solver(rolled_solid, (1,0), sol_method=sol_method)
+         sol.converge(max_iter=5)
 
-         
          clear_autotest_h5()
          sol.sync()
          hdf5.write_solver_to_h5("autotest.h5", sol)
          sol.sync()
          # Reading is threadsafe!
-         h5 = openFile("autotest.h5")
+         h5 = tables.open_file("autotest.h5")
          test_P = h5.root.simulations.x_sim.P[:]
          test_u = h5.root.simulations.x_sim.u[:]
          test_v = h5.root.simulations.x_sim.v[:]
@@ -126,33 +126,33 @@ def shift_test(sol_method='default'):
          # Phrasing the subtraction this way makes
          du = (rolled_u - test_u)
          dv = (rolled_v - test_v)
-   
-         print "Offset test (%i, %i) Mean du: %f Mean dv: %f" % (x, y, du.mean(), dv.mean())
-         
+
+         print(f"Offset test ({x}, {y}) Mean du: {du.mean()} Mean dv: {dv.mean()}")
+
          assert all(du < 1e-8)
          assert all(dv < 1e-8)
 
-         print "Success . . "
+         print("Success . . ")
          clear_autotest_h5()      
 
    
 
 def test_3d(sol_method='default'):
-    sol = Solver(three_test, (0,1,0), sol_method=sol_method,  printing = 2)
+    sol = Solver(three_test, (0,1,0), sol_method=sol_method)
     sol.converge()
     sol.regrid()
 
     if not allclose(sol.P[2,:,:], correct_P):
-        raise ValueError, "Incorrect answer for 3-d test case"
+        raise ValueError("Incorrect answer for 3-d test case")
     else:
-        print "Test Successful!!!"
+        print("Test Successful!!!")
 
     return sol
 
-def test_tube(sol_method="trilinos"):
+def test_tube(sol_method="spsolve"):
     liquid = oblique_111cylinder() 
     solid = 1 - liquid
-    sol = Solver(1-solid, (1,0,0), printing=2, sol_method=sol_method)
+    sol = Solver(1-solid, (1,0,0), sol_method=sol_method)
     # sol.monolithic_solve()
     sol.converge()
 
@@ -161,20 +161,19 @@ def test_tube(sol_method="trilinos"):
 def test_helix(sol_method="default"):
     liquid = helix() 
     solid = 1 - liquid
-    sol = Solver(solid, (0.,0.,1.), printing=2, sol_method=sol_method)
+    sol = Solver(solid, (0.,0.,1.), sol_method=sol_method)
     sol.converge()
 
     hdf5.write_S("semi-helix.h5", solid)
     hdf5.write_solver_to_h5("semi-helix.h5", sol)
 
 def test_tables(sol_method='default'):
-   print "Testing hdf5 saving capabilities:"
-   import hdf5
-   sol =  Solver(test_matrix, (1,0), sol_method=sol_method, printing = 2)
+   print("Testing hdf5 saving capabilities:")
+   sol = Solver(test_matrix, (1,0), sol_method=sol_method)
    sol.converge(1e-10)
 
    hdf5.write_solver_to_h5("autotest.h5", sol)
-   print "Test Sucessful!"
+   print("Test Sucessful!")
 
 def helix():
    x, y, z = mgrid[-1:1:31j,-1:1:31j,-1:1:31j]
@@ -202,40 +201,40 @@ def helix():
    return tube
 
 def test_all_2d_config(sol_method='default'):
-    print "Now running all cell configurations:"
+    print("Now running all cell configurations:")
     cfg_iter = []
-    for x in range(1,256):
+    for x in range(1, 256):
         solid = ndim_eq.make_safe_config_test(x)
-        print "Starting Config %f" % x
-        print "Solid--"
-        print solid
+        print(f"Starting Config {x}")
+        print("Solid--")
+        print(solid)
 
         start_time = time.time()
-        a = Solver(solid, (1,0), sol_method=sol_method, printing = 2)
+        a = Solver(solid, (1,0), sol_method=sol_method)
         setup_time = time.time()
         a.converge()
         finish_time = time.time()
-        
-        print "Config %i - " % x
-        print "\t%i iterations. " % a.I
-        print "\tSetup Time:%f" % (setup_time - start_time)
-        print "\tConverge Time:%f" % (finish_time - setup_time)
 
-    print "Test Successful!!! Solver converged for all 255 configurations!"
+        print(f"Config {x} - ")
+        print(f"\t{a.I} iterations. ")
+        print(f"\tSetup Time:{setup_time - start_time}")
+        print(f"\tConverge Time:{finish_time - setup_time}")
+
+    print("Test Successful!!! Solver converged for all 255 configurations!")
 
 
 def test_monolithic_2d(sol_method='default'):
-    s = Solver(test_matrix, (1,0), printing = 2)
+    s = Solver(test_matrix, (1,0))
     s.monolithic_solve()
     s.regrid()
     if not allclose(s.P, correct_P):
-        print "Answer Different!"
-        print "Correct:"
-        print correct_P
-        print "Wrng!:"
-        print s.P
+        print("Answer Different!")
+        print("Correct:")
+        print(correct_P)
+        print("Wrng!:")
+        print(s.P)
         raise ValueError("Unittest failure")
-    print "Test Sucessful!"
+    print("Test Sucessful!")
 
 
 def test_all(sol_method='default'):
@@ -244,44 +243,44 @@ def test_all(sol_method='default'):
     test_all_2d_config(sol_method)
     test_monolithic_2d()
 
-def do_validation_runs(domain_width = 50., count = 10, filename = "validation.h5"):
-   # TODO: Out of date?
+def do_validation_runs(domain_width=50., count=10, filename="validation.h5"):
+    # TODO: Out of date?
     if count < 1:
         raise ValueError("Invalid count.")
 
-    domain_shape = (domain_width, domain_width)
+    domain_shape = (int(domain_width), int(domain_width))
     max_radius = domain_width / 2.
     x, y = mgrid[-1:1:1j*domain_width, -1:1:1j*domain_width]
 
     radaii = linspace(0, max_radius, count + 2) / max_radius
     radaii = radaii[1:-1]
 
-    h5 = tables.openFile(filename, "w")
+    h5 = tables.open_file(filename, "w")
     for n, radius in enumerate(radaii):
 
         solid = x**2 + y**2 < radius**2
-        s = Solver(solid, (1,0), printing = 2)
+        s = Solver(solid, (1,0))
         s.converge()
         s.regrid()
 
         # Create the groups we need.
-        table_title = "flow around cylinder with non-dimensional radius of %06f"%radius
-        table_name  = "run_%i" % n
-        r_group = h5.createGroup("/", table_name, title = table_title )
-        h5.createCArray(r_group, "S", tables.Int8Atom(), domain_shape)
+        table_title = f"flow around cylinder with non-dimensional radius of {radius:06f}"
+        table_name = f"run_{n}"
+        r_group = h5.create_group("/", table_name, title=table_title)
+        h5.create_carray(r_group, "S", tables.Int8Atom(), domain_shape)
         for name in ["P", "u", "v"]:
             tab_atom = tables.Atom.from_dtype(s.P.dtype)
-            h5.createCArray(r_group, name, tab_atom, domain_shape)
-        
+            h5.create_carray(r_group, name, tab_atom, domain_shape)
+
         r_group.S[:] = solid
         r_group.P[:] = s.P
         r_group.u[:] = s.V_GRIDS[0]
         r_group.v[:] = s.V_GRIDS[1]
 
-        meta =  r_group._v_attrs
+        meta = r_group._v_attrs
 
         meta.nondimensional_radius = radius
-    print "Validation Runs Completed"
+    print("Validation Runs Completed")
 
 
 

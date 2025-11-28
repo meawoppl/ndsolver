@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ndsolver"
+version = "0.2.0"
+description = "N-dimensional Stokes flow solver for periodic porous media"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Robert Erdmann"},
+    {name = "Matthew Goodman"},
+]
+keywords = ["stokes", "flow", "porous", "media", "finite-difference", "simulation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
+dependencies = [
+    "numpy>=1.24,<2.0",
+    "scipy>=1.11,<2.0",
+    "tables>=3.8",
+    "Pillow>=10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "black",
+    "ruff",
+]
+
+[project.scripts]
+ndsolver = "ndsolver.cli:main"
+
+[project.urls]
+Repository = "https://github.com/meawoppl/ndsolver"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ndsolver*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

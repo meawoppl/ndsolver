@@ -4,13 +4,13 @@ import os, time
 
 def debug_output(something):
     f = open("debug.log",'a')
-    f.write("[%s] - " % time.ctime() + something + "\n")
+    f.write(f"[{time.ctime()}] - {something}\n")
     f.close()
 
 def clear_debug():
     open("debug.log",'w')
 
-debug_output( "task started for %s %s" % (task_path, str(dP) ) )
+debug_output(f"task started for {task_path} {dP}")
 
 debug_output( "ndsolver in locals(): " + str("ndsolver" in locals()) )
 

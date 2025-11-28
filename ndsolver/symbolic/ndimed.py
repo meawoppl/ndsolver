@@ -57,7 +57,7 @@ def num_to_point(num, shape):
     rev_point = []
     for axis_dim in shape[::-1]:
         mod = num % axis_dim
-        num = num / axis_dim    # int
+        num = num // axis_dim
         rev_point.append(mod)
         
     return tuple(rev_point[::-1])
@@ -88,10 +88,10 @@ def roller(point, shape):
 if __name__ == "__main__":
     a = arange(25).reshape((5,5))
     for x in iter_grid(a):
-        print x, "-", a[x]
+        print(x, "-", a[x])
 
     for point in perturb((3,3,3)):
-        print point
+        print(point)
         
 
     

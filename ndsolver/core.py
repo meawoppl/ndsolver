@@ -1,13 +1,16 @@
+import logging
 import warnings
-from numpy import ( all, allclose, arange, array, average, concatenate, 
+from numpy import ( all, allclose, arange, array, average, concatenate,
                     c_, cumsum, dot, float64, inf,  int64, logical_and,
-                    logical_not, logical_or, mean, memmap, ones, r_, roll, sqrt, 
+                    logical_not, logical_or, mean, memmap, ones, r_, roll, sqrt,
                     take, where, zeros, zeros_like )
 import time
 from socket import gethostname
 
 # libs that do the symbolic S terms etc.
-from symbolic import ndim_eq, ndimed
+from .symbolic import ndim_eq, ndimed
+
+logger = logging.getLogger(__name__)
 
 # Scipy and Solvers are imported as needed to keep memory profile low!
 
@@ -20,31 +23,15 @@ class Solver():
     'dP' is list/tuple of pressure difference across
     the n-th dimension of the domain"
     '''
-    def __init__(self, solid_or_filename, dP, sol_method = "default", printing = False, dbcallback = None ):
+    def __init__(self, solid_or_filename, dP, sol_method="default"):
         # Log the starting time
         self.start_time = time.time()
 
-	# Set debugging flag
-        self.printlevel = printing
-        self.dbcallback = dbcallback
+        # Single-threaded solver
+        self.myID = 0
+        self.cpuCount = 1
 
-        # Trilinos setup and iteration requires very different programmatic flow . . . 
-        self.using_trilinos = ( sol_method == "trilinos")
-
-        # Trilinos communicator between threads . . .
-        if self.using_trilinos:
-            # Epetra Imported Here and all vectors defined
-            from PyTrilinos import Epetra 
-            self.Comm = Epetra.PyComm()    
-            self.myID = self.Comm.MyPID()
-            self.cpuCount = self.Comm.NumProc()
-            self.dbprint("Trilinos Inititated: %s" % gethostname())
-        else:
-            # Only one thread
-            self.myID = 0
-            self.cpuCount = 1
-
-        self.dbprint("Solver Instantiated", level = 2)
+        logger.debug("Solver Instantiated")
         
         # Default direction of pressure drop
         self.dP = dP
@@ -84,7 +71,7 @@ class Solver():
                 self.setup_dof_cache_faster(solid_or_filename)
             
             self.sync()
-            self.dbprint("Waiting for cached file to flush to disk.")
+            logger.info("Waiting for cached file to flush to disk.")
             time.sleep(1)
             self.sync()
 
@@ -109,7 +96,7 @@ class Solver():
             self.setup_bc()
     
     def setup_la(self):
-        self.dbprint("Starting Setup Routine", 2)
+        logger.debug("Starting Setup Routine")
         # Everything is ND wrt.  the 0th axis
         self.h = 1./self.shape[0]
 
@@ -117,7 +104,7 @@ class Solver():
         # Stupid checks #
         #################        
         if self.ndim != len(self.dP):
-            raise ValueError("Solid Array and Pressure Drop do not have matching dimensions:\n\tself.ndim:%i\n\t%s" % (self.ndim, self.dP))
+            raise ValueError(f"Solid Array and Pressure Drop do not have matching dimensions:\n\tself.ndim:{self.ndim}\n\t{self.dP}")
 
         #################
         # FYI Printouts #
@@ -126,10 +113,10 @@ class Solver():
         self.dof_number = sum(self.vel_dof_nums)  + self.P_dof_num
        
         # print some useful DOF debugging information:
-        self.dbprint( "Degree of freedom count: %i" % self.dof_number )
-        self.dbprint( "\tPressure: %i" % self.P_dof_num )
+        logger.info(f"Degree of freedom count: {self.dof_number}")
+        logger.info(f"\tPressure: {self.P_dof_num}")
         for dim in range(self.ndim):
-            self.dbprint( "\tVelocity %i: %i" % (dim, self.vel_dof_nums[dim]) )
+            logger.info(f"\tVelocity {dim}: {self.vel_dof_nums[dim]}")
 
         ##########################
         # DOF Grabbing Functions #
@@ -150,44 +137,23 @@ class Solver():
         # Vectors #
         ###########
         # Vector shaped pressure and correction
-        if self.using_trilinos:
-            from PyTrilinos import Epetra 
-            self.PMap = Epetra.Map(self.P_dof_num, 0, self.Comm)
+        self.myP_dof_min = 0
+        self.myP_dof_max = self.P_dof_num - 1
 
-            self.myP_dof_min = self.PMap.MinMyGID()
-            self.myP_dof_max = self.PMap.MaxMyGID()
+        # Pressure
+        self.P_LHS = zeros( self.P_dof_num )
+        self.P_RHS = zeros( self.P_dof_num )
+        self.P_COR = zeros( self.P_dof_num )
+        self.PTEMP = zeros( self.P_dof_num )
 
-            self.P_LHS = Epetra.Vector(self.PMap)
-            self.P_RHS = Epetra.Vector(self.PMap)
-            self.P_COR = Epetra.Vector(self.PMap)
-            self.PTEMP = Epetra.Vector(self.PMap)
+        # Biot number and Divergence have the same vector size/Map
+        self.Bi          = zeros( self.P_dof_num )
+        self.DIV_MULT    = zeros( self.P_dof_num )
 
-            # Biot number and Divergence have the same vector size/Map
-            self.Bi       = Epetra.Vector(self.PMap)
-            self.DIV_MULT = Epetra.Vector(self.PMap)
-        
-            # Numbers related to the divergence
-            self.last_abs_div= Epetra.Vector(self.PMap)
-            self.D_LIN       = Epetra.Vector(self.PMap)
-            self.ABS_D_LIN   = Epetra.Vector(self.PMap)
-        else:
-            self.myP_dof_min = 0
-            self.myP_dof_max = self.P_dof_num - 1
-
-            # Pressure
-            self.P_LHS = zeros( self.P_dof_num )
-            self.P_RHS = zeros( self.P_dof_num )
-            self.P_COR = zeros( self.P_dof_num )
-            self.PTEMP = zeros( self.P_dof_num )
-            
-            # Biot number and Divergence have the same vector size/Map
-            self.Bi          = zeros( self.P_dof_num )
-            self.DIV_MULT    = zeros( self.P_dof_num )
-        
-            # Numbers related to the divergence
-            self.last_abs_div= zeros( self.P_dof_num )
-            self.D_LIN       = zeros( self.P_dof_num )
-            self.ABS_D_LIN   = zeros( self.P_dof_num )
+        # Numbers related to the divergence
+        self.last_abs_div= zeros( self.P_dof_num )
+        self.D_LIN       = zeros( self.P_dof_num )
+        self.ABS_D_LIN   = zeros( self.P_dof_num )
 
         # So the convergence loop runs once before assessing that its done
         self.max_D       = inf
@@ -199,32 +165,19 @@ class Solver():
         # self.V_LHS - The linear representation of velocity (index is dof #)
         # self.VEL_RHS - The matrices that generate the RHS to the velocity equation
 
-        # Vector shaped Velocities and 
-        if self.using_trilinos:            
-            self.VMaps = [ Epetra.Map(dof_count, 0, self.Comm) for dof_count in self.vel_dof_nums ]
+        # Vector shaped Velocities
+        self.myV_dof_min = [ 0 for dofs in self.vel_dof_nums ]
+        self.myV_dof_max = [ dofs for dofs in self.vel_dof_nums ]
 
-            self.myV_dof_min = [ vmap.MinMyGID() for vmap in self.VMaps ]
-            self.myV_dof_max = [ vmap.MaxMyGID() for vmap in self.VMaps ]
-
-            self.V_LHS = [ Epetra.Vector(vmap) for vmap in self.VMaps ]
-            self.V_RHS = [ Epetra.Vector(vmap) for vmap in self.VMaps ]
-            self.V_COR = [ Epetra.Vector(vmap) for vmap in self.VMaps ]
-            self.VTEMP = [ Epetra.Vector(vmap) for vmap in self.VMaps ]
-
-        else:
-            self.myV_dof_min = [ 0 for dofs in self.vel_dof_nums ]
-            self.myV_dof_max = [ dofs for dofs in self.vel_dof_nums ]
-
-            self.V_LHS = [ zeros( dof_count ) for dof_count in self.vel_dof_nums ]
-            self.V_RHS = [ zeros( dof_count ) for dof_count in self.vel_dof_nums ]
-            self.V_COR = [ zeros( dof_count ) for dof_count in self.vel_dof_nums ]
-            self.VTEMP = [ zeros( dof_count ) for dof_count in self.vel_dof_nums ]
+        self.V_LHS = [ zeros( dof_count ) for dof_count in self.vel_dof_nums ]
+        self.V_RHS = [ zeros( dof_count ) for dof_count in self.vel_dof_nums ]
+        self.V_COR = [ zeros( dof_count ) for dof_count in self.vel_dof_nums ]
+        self.VTEMP = [ zeros( dof_count ) for dof_count in self.vel_dof_nums ]
 
         # Print pressure DOFs
         for cpu in range(self.cpuCount):
             if cpu == self.myID:
-                self.dbprint("My Pressure Degrees of Freedom.  Min:%i Max:%i" 
-                             % (self.myP_dof_min, self.myP_dof_max) )
+                logger.info(f"My Pressure Degrees of Freedom.  Min:{self.myP_dof_min} Max:{self.myP_dof_max}")
                 self.sync()
         
         # Print the velocity degrees of freedom
@@ -233,8 +186,7 @@ class Solver():
             for cpu in range(self.cpuCount):
                 if cpu != self.myID:
                     continue
-                self.dbprint("My Velocity (%i) DOFs.  Min:%i Max:%i" 
-                             % (x, self.myV_dof_min[x], self.myV_dof_max[x]) )
+                logger.info(f"My Velocity ({x}) DOFs.  Min:{self.myV_dof_min[x]} Max:{self.myV_dof_max[x]}")
                 self.sync()
 
         # These lists are the ones you have to step through to cover
@@ -261,46 +213,46 @@ class Solver():
         self.la_is_setup = True
 
     def setup_dof_cache_faster(self, s_filename):
-        from tables import openFile
-        self.dbprint("BIG MODE! Setting up DOF Cache")
+        from tables import open_file
+        logger.info("BIG MODE! Setting up DOF Cache")
         # Should only be run by cpu 0!
-        if self.myID != 0: 
+        if self.myID != 0:
             raise RuntimeError("Only thread 0 should setup dof cache!")
 
         # Open the file to copy S from
-        self.dbprint("Opening h5 file to read solid")
-        source_h5 = openFile(s_filename)
+        logger.info("Opening h5 file to read solid")
+        source_h5 = open_file(s_filename)
         S = source_h5.root.geometry.S[:]
-        self.dbprint("Success!", 3)
+        logger.debug("Success!")
         shape = S.shape
         ndim = len(shape)
 
         # Write Memory Maps
-        self.dbprint("Writing memmap files.")
+        logger.info("Writing memmap files.")
         shape_map = memmap("shape.mem",    dtype="int64", mode='w+', shape=tuple([ndim]))
         s_memmap  =  memmap("S.mem",       dtype="int64", mode='w+', shape=shape)
         p_memmap  =  memmap("P.mem",       dtype="int64", mode='w+', shape=shape)
-        v_memmaps = [memmap("V%i.mem" % x, dtype="int64", mode='w+', shape=shape) for x in range(ndim)]
+        v_memmaps = [memmap(f"V{x}.mem", dtype="int64", mode='w+', shape=shape) for x in range(ndim)]
 
-        self.dbprint("Assigning Values.")
+        logger.info("Assigning Values.")
 
         # Assign the shape
         shape_map[:] = array(shape).astype(int64)[:]
-        self.dbprint("Shape Done.")
+        logger.info("Shape Done.")
         
         # Assign S
         s_memmap[:] = S[:].astype(int64)
-        self.dbprint("S Done.")
+        logger.info("S Done.")
 
         # Assign P's
         p_memmap[:] = ndim_eq.p_dof(S).astype(int64)
-        self.dbprint("P Done.")
+        logger.info("P Done.")
 
         # Assign V's
         for axis, v_mmap in enumerate(v_memmaps):
             v_mmap[:] = ndim_eq.velocity_dof(S, axis).astype(int64)
-        self.dbprint("VS Done.")
-        self.dbprint("Loaded Maps . . .  Flushing.")
+        logger.info("VS Done.")
+        logger.info("Loaded Maps . . .  Flushing.")
         # Flush All to disk.
         shape_map.flush()
         s_memmap.flush()
@@ -308,57 +260,29 @@ class Solver():
         [v_mmap.flush() for v_mmap in v_memmaps]
 
         source_h5.close()
-        self.dbprint("\tDone Constructing memory mapped files.")
+        logger.info("\tDone Constructing memory mapped files.")
         
     def import_dof_cache(self):
-        self.dbprint("Opening DOF Cache")
+        logger.info("Opening DOF Cache")
         sm = memmap("shape.mem", dtype="int64", mode='r')
-        self.dbprint("\tShape Done.", 3)
+        logger.debug("\tShape Done.")
         self.shape = tuple(sm[:])
         self.ndim = len(self.shape)
 
         self.S  = memmap("S.mem", dtype="int64", mode='r', shape=self.shape)
-        self.dbprint("\tSolid Done.", 3)
+        logger.debug("\tSolid Done.")
 
 
         self.P_dof_grid  = memmap("P.mem", dtype="int64", mode='r', shape=self.shape)
-        self.dbprint("\tPressure Done.", 3)
-        self.vel_dof_grids = [ memmap("V%i.mem" % x, dtype="int64", mode='r', shape=self.shape) for x in range(self.ndim) ]
-        self.dbprint("\tVelocities Done.", 3)
+        logger.debug("\tPressure Done.")
+        self.vel_dof_grids = [ memmap(f"V{x}.mem", dtype="int64", mode='r', shape=self.shape) for x in range(self.ndim) ]
+        logger.debug("\tVelocities Done.")
 
-    # Get the matrix product between where Mx = b
-    # Agnostic to whether we are using Trilinos/scipy
+    # Get the matrix product where Mx = b
     def mat_mult(self, M, x, b):
-        self.dbprint("Matrix Multiply Called", 2)
-        if ("scipy" in str(type(M))):
-            b[:] = M * x
-        elif ("Epetra" in str(type(M))):
-            self.sync("Pre MM")
-            self.dbprint("Trilinos MM return: %i" % M.Multiply(False, x, b), 3)
-            self.sync("Post MM")
-        else:
-            raise ValueError("Huh?")
+        logger.debug("Matrix Multiply Called")
+        b[:] = M * x
  
-    # Debug printer . . . kinda neat to watch
-    def dbprint(self, string, level = 1):
-        '''This is a debug printing routine.
-        Level Indicates Urgency:\n
-        0:Non-recoverable errors
-        1:Information
-        2:Details'''
-        
-        # Call whatever debug printing function you desire!
-        time_diff = time.time() - self.start_time
-        string = "[%02f][%i/%i] %s" % (time_diff, self.myID + 1, self.cpuCount, string)
-
-        # This is used to output debugging info locally on headless nodes, etc.
-        # i.e make a function that cats the strings to a file, or html stream etc.
-        if self.dbcallback != None:
-            self.dbcallback(string)
-
-        # Screen output regulated on priority, callback not
-        if level <= self.printlevel:
-            print string
 
     def setup_matrices(self):
         ###################
@@ -370,74 +294,48 @@ class Solver():
         # SM - S-Terms Matrix (RHS to Pressure Poisson)
         # GM - Gradient of P Matrix
 
-        if self.using_trilinos:
-            # Square Matrices
-            from PyTrilinos.Epetra import CrsMatrix, Copy
-            self.PM =   CrsMatrix(Copy, self.PMap, self.max_row_nz)
-            self.VM = [ CrsMatrix(Copy, vmap, self.max_row_nz) for vmap in self.VMaps ]
-            # Rectangulars
-            self.DM = [ CrsMatrix(Copy, self.PMap, 2 ) for vmap in self.VMaps ]
-            self.ST = [ CrsMatrix(Copy, self.PMap, 2 ) for vmap in self.VMaps ]
-            self.GM = [ CrsMatrix(Copy,      vmap, 2 ) for vmap in self.VMaps ]
-        else:
-            # Scipy imported here now
-            from scipy.sparse import lil_matrix
-            # Square Matrices
-            self.PM =   lil_matrix( (self.P_dof_num, self.P_dof_num ) )
-            self.VM = [ lil_matrix( (dof_count,      dof_count) ) for dof_count in self.vel_dof_nums ]
-            # Rectangulars
-            self.DM = [ lil_matrix( (self.P_dof_num, dof_count) ) for dof_count in self.vel_dof_nums ]
-            self.ST = [ lil_matrix( (self.P_dof_num, dof_count) ) for dof_count in self.vel_dof_nums ]
-            self.GM = [ lil_matrix( (dof_count, self.P_dof_num) ) for dof_count in self.vel_dof_nums ]
+        from scipy.sparse import lil_matrix
+        # Square Matrices
+        self.PM =   lil_matrix( (self.P_dof_num, self.P_dof_num ) )
+        self.VM = [ lil_matrix( (dof_count,      dof_count) ) for dof_count in self.vel_dof_nums ]
+        # Rectangulars
+        self.DM = [ lil_matrix( (self.P_dof_num, dof_count) ) for dof_count in self.vel_dof_nums ]
+        self.ST = [ lil_matrix( (self.P_dof_num, dof_count) ) for dof_count in self.vel_dof_nums ]
+        self.GM = [ lil_matrix( (dof_count, self.P_dof_num) ) for dof_count in self.vel_dof_nums ]
             
         #################
         # Fill Matrices #
         #################
 
         # Setup the Pressure Matrix
-        self.dbprint("Filling the Pressure Poisson Matrix")
+        logger.info("Filling the Pressure Poisson Matrix")
         self._fill_PM()
 
         # Setup the n Velocity, divergence, and gradient matrices
         for dim in range(self.ndim):
-            self.dbprint( "Setting up Velocity Poisson Matrix (%i)" % dim )
+            logger.info(f"Setting up Velocity Poisson Matrix ({dim})")
             self._fill_VM(dim)
 
-            self.dbprint( "Calculating Divergence/Biot Matrix (%i)" % dim )
+            logger.info(f"Calculating Divergence/Biot Matrix ({dim})")
             self._fill_DM(dim)
 
-            self.dbprint( "Calculating Gradient Matrix (%i)" % dim )
+            logger.info(f"Calculating Gradient Matrix ({dim})")
             self._fill_GM(dim)
 
         # Due to the symbolic nature of these, they are done
         # All at once
-        self.dbprint("Calculating S-Terms")
+        logger.info("Calculating S-Terms")
         self._fill_S()
 
         ##############################
         # Convert/Finialize Matrices #
         ##############################
-
-        if self.using_trilinos:
-            self.dbprint("FillComplete on all Matrices (Waiting For other Threads)")
-            self.sync("Pre-FillComplete() of matrices")
-
-            # Square Matrix Implicit in FillComplete (PM, VM's)
-            self.PM.FillComplete()
-            [ m.FillComplete() for m in self.VM ]
-
-            # Rectagular need maps defined
-            [ m.FillComplete(vmap, self.PMap) for m, vmap in zip(self.DM, self.VMaps) ]
-            [ m.FillComplete(vmap, self.PMap) for m, vmap in zip(self.ST, self.VMaps) ]
-            [ m.FillComplete(self.PMap, vmap) for m, vmap in zip(self.GM, self.VMaps) ]
-
-        else:
-            self.dbprint("Converting All To CSR")
-            self.PM = self.PM.tocsr()
-            self.VM = [m.tocsr() for m in self.VM]
-            self.DM = [m.tocsr() for m in self.DM]
-            self.ST = [m.tocsr() for m in self.ST]
-            self.GM = [m.tocsr() for m in self.GM]
+        logger.info("Converting All To CSR")
+        self.PM = self.PM.tocsr()
+        self.VM = [m.tocsr() for m in self.VM]
+        self.DM = [m.tocsr() for m in self.DM]
+        self.ST = [m.tocsr() for m in self.ST]
+        self.GM = [m.tocsr() for m in self.GM]
 
 
 
@@ -446,76 +344,32 @@ class Solver():
         self.P_LHS = self.spsolve( self.PM, self.P_RHS )
     def _spsolve_V(self, dim, *args, **kwargs):
         self.V_LHS[dim] = self.spsolve( self.VM[dim], self.V_RHS[dim] )
-        
+
     # scipy splu
     def _splu_P(self, *args, **kwargs):
         self.P_LHS = self.PM_LU.solve(self.P_RHS)
     def _splu_V(self, dim, *args, **kwargs):
         self.V_LHS[dim] = self.VM_LU[dim].solve(self.V_RHS[dim])
 
-    # pyamg
-    # def _pyamg_P(self, *args, **kwargs):
-    #     self.P_LHS = self.PM_RUBE.solve(self.P_RHS, tol=1e-10)
-    # def _pyamg_V(self, dim, *args, **kwargs):
-    #     self.V_LHS[dim] = self.VM_RUBE[dim].solve(rhs, tol=1e-10)
-        
-    # pytrilinos
-    # I expected it to converge more quickly using the
-    # Previoud LHS as the first guess, but its def. 
-    # seems to cause problems (zeroing out is the fastest I can find)
-    def _trilinos_P(self, *args, **kwargs):
-        self.sync("Pre P Solve" )
-        self.P_LHS[:] = 0
-        tril_return = self.t_PSol.Iterate(5000, 1e-12)
-        self.sync("Post P Solve")
-        return_string = "Trilinos solve return code: %i" % tril_return
-        self.dbprint(return_string, 3)
-        if tril_return > 0:
-            warnings.warn(return_string)
-        elif tril_return < 0:
-            self.dbprint("Non-Zero Trilinos Return.  This is BAD!", 0)
-            # raise RuntimeError(return_string)
-
-    def _trilinos_V(self, dim, *args, **kwargs):
-        self.sync("Pre V Solve (%i)" % dim)
-        self.V_LHS[dim][:] = 0
-        tril_return = self.t_VSol[dim].Iterate(5000, 1e-12)
-        self.sync("Post V Solve (%i)" % dim)
-        return_string = "Trilinos solve return code: %i" % tril_return
-        self.dbprint(return_string, 3)
-        if tril_return > 0:
-            warnings.warn(return_string)
-        elif tril_return < 0:
-            self.dbprint("Non-Zero Trilinos Return.  This is BAD!", 0)
-            # raise RuntimeError(return_string)
-
     def test_matrices(self):
         def vec_nnz(vec):
-            if "Trilinos" in str(type(vec)):
-                return vec.Norm1()             
-            else:
-                return abs(vec).sum()
+            return abs(vec).sum()
 
         def mat_nnz(mat):
-            if hasattr(mat, "getnnz"):
-                return mat.getnnz()
-            elif hasattr(mat, "NumGlobalNonzeros"):
-                return mat.NumGlobalNonzeros()
-            else:
-                raise ValueError("Not a recognized Matrix Format")
+            return mat.getnnz()
 
-        self.dbprint("Matrix Non-Zero Check")
-        self.dbprint("PM: %i" % mat_nnz(self.PM) )
+        logger.info("Matrix Non-Zero Check")
+        logger.info(f"PM: {mat_nnz(self.PM)}")
         for dim in range(self.ndim):
-            self.dbprint("VM (%i): %i" % (dim, mat_nnz(self.VM[dim])) )
-            self.dbprint("GM (%i): %i" % (dim, mat_nnz(self.GM[dim])) )
-            self.dbprint("DM (%i): %i" % (dim, mat_nnz(self.DM[dim])) )
-            self.dbprint("ST (%i): %i" % (dim, mat_nnz(self.ST[dim])) )
+            logger.info(f"VM ({dim}): {mat_nnz(self.VM[dim])}")
+            logger.info(f"GM ({dim}): {mat_nnz(self.GM[dim])}")
+            logger.info(f"DM ({dim}): {mat_nnz(self.DM[dim])}")
+            logger.info(f"ST ({dim}): {mat_nnz(self.ST[dim])}")
 
-        self.dbprint("Vector Norm Check")
-        self.dbprint("P_COR: %i" % vec_nnz(self.P_COR))
+        logger.info("Vector Norm Check")
+        logger.info(f"P_COR: {vec_nnz(self.P_COR)}")
         for dim in range(self.ndim):
-            self.dbprint("V_COR (%i): %i" % (dim, vec_nnz(self.V_COR[dim])) )
+            logger.info(f"V_COR ({dim}): {vec_nnz(self.V_COR[dim])}")
 
 
     def setup_matrix_solver(self):
@@ -530,7 +384,7 @@ class Solver():
         # No Biot number . . . purely derived from
         # Dr. Erdmann's thesis  (for validation/benchmarking)
         if self.method == "nobi":
-            self.dbprint("Bi Number disabled.", level=2)
+            logger.debug("Bi Number disabled.")
             # Set the ignore Bi, flag and use spsolve
             self.useBi = False
             self.method = 'spsolve'
@@ -541,7 +395,7 @@ class Solver():
         if self.method == 'spsolve':
             from scipy.sparse.linalg import spsolve
             self.spsolve = spsolve
-            self.dbprint("spsolve selected . . . doing nothing", level=2)            
+            logger.debug("spsolve selected . . . doing nothing")            
             self.PM    = self.PM.tocsr()
 
             for dim in range(self.ndim):
@@ -561,103 +415,40 @@ class Solver():
         # Don't even try this on a 3d . . .
         elif self.method == 'splu':
             from scipy.sparse.linalg import splu
-            self.dbprint("SPLU'ing Matrices", level=2)
-            self.dbprint("\t Pressure.tocsc()", level=2)
+            logger.debug("SPLU'ing Matrices")
+            logger.info("\t Pressure.tocsc()", level=2)
             self.PM    = self.PM.tocsc()
-            self.dbprint("\t Pressure", level=2)
+            logger.debug("\t Pressure")
             self.PM_LU = splu(self.PM)
 
             self.VM_LU = [None] * self.ndim
             for dim in range(self.ndim):
-                self.dbprint("\t Velocity %i tocsc()" % dim, level=2)
+                logger.debug(f"\t Velocity {dim} tocsc()")
                 self.VM[dim] = self.VM[dim].tocsc()
-                self.dbprint("\t Velocity %i -splu" % dim, level=2)
+                logger.debug(f"\t Velocity {dim} -splu")
                 self.VM_LU[dim] = splu(self.VM[dim])
 
-            self.SOLVE_P = self._splu_P            
+            self.SOLVE_P = self._splu_P
             self.SOLVE_V = self._splu_V
 
-        # Relies on pyamg for AMG solvers. Should be wicked fast breaks for large grids?
-        # Need to add adjustable parameters for large and small systems . . .
-        # TODO: Currently crashes so commented out . . .
-        # elif self.method == 'ruge':
-        #     import pyamg
-        #     self.dbprint("Setting up ruge_stuben_solver(s)", level=2)
-        #     self.dbprint("\t Pressure.tocsr()", level=2)
-        #     self.PM    = self.PM.tocsr()
-        #     self.dbprint("\t Pressure Stuben", level=2)
-        #     self.PM_RUBE = pyamg.ruge_stuben_solver( self.PM )
-
-
-        #     self.VM_RUBE = [None] * self.ndim
-        #     for dim in range(self.ndim):
-        #         self.dbprint("\t Velocity %i tocsr()" % dim, level=2)
-        #         self.VM[dim] = self.VM[dim].tocsr()
-        #         self.dbprint("\t Velocity %i -rube" % dim, level=2)
-        #         self.VM_RUBE[dim] = pyamg.ruge_stuben_solver( self.VM[dim] )
-        #     self.SOLVE_P = _pyamg_P
-        #     self.SOLVE_V = _pyamg_V
-
-        elif self.method == "trilinos":
-            self.dbprint("Using Trilinos!", level=2)
-
-            # Trilinos Solving Options:
-            MLList = { "max levels" : 10,
-                       "output" : 10,
-                       "smoother: pre or post" : "both",
-                       "smoother: type" : "Chebyshev",
-                       "aggregation: type" : "Uncoupled",
-                       "coarse: type" : "Amesos-KLU" }
-            
-            # import ML for the preconditioners
-            from PyTrilinos import ML, AztecOO
-            # Compute the preconditioner . . .
-            self.t_PCond = ML.MultiLevelPreconditioner(self.PM, False)
-            self.t_PCond.SetParameterList(MLList)
-            self.t_PCond.ComputePreconditioner()
-
-            # Setup the Pressure Poisson solver
-            self.t_PSol = AztecOO.AztecOO(self.PM, self.P_LHS, self.P_RHS)
-            self.t_PSol.SetPrecOperator(self.t_PCond)
-            self.t_PSol.SetAztecOption(AztecOO.AZ_solver, AztecOO.AZ_gmres)
-            self.t_PSol.SetAztecOption(AztecOO.AZ_output, 64)
-
-            self.t_VCon = [ML.MultiLevelPreconditioner(mat, False) for mat in self.VM]
-            self.t_VSol = [AztecOO.AztecOO(self.VM[dim], self.V_LHS[dim], self.V_RHS[dim]) for dim in range(self.ndim)]
-            for prec, sol in zip(self.t_VCon, self.t_VSol):
-                # Compute the preconditioner . . .
-                prec.SetParameterList(MLList)
-                prec.ComputePreconditioner()
-
-                # Apply it and setup the Velocity Poisson solver for each axis
-                sol.SetPrecOperator(prec)
-                sol.SetAztecOption(AztecOO.AZ_solver, AztecOO.AZ_gmres)
-                sol.SetAztecOption(AztecOO.AZ_output, 64)
-
-            self.SOLVE_P = self._trilinos_P
-            self.SOLVE_V = self._trilinos_V
         else:
-            self.dbprint("Solver type '%s' not recognized!!!!" % self.method, level = 0)
-            raise ValueError("Solver type '%s' not recognized!!!!" % self.method)
+            logger.warning(f"Solver type '{self.method}' not recognized!!!!")
+            raise ValueError(f"Solver type '{self.method}' not recognized!!!!")
 
     def setup_bc(self):
-        self.dbprint("Calculating Periodic Correction Vectors", 2)
+        logger.debug("Calculating Periodic Correction Vectors")
 
-        self.dbprint("\tV - RHS Correction", 3)
+        logger.debug("\tV - RHS Correction")
         #############################
         # Velocity RHS's Correction #
         #############################
         for dim in range(self.ndim):
             for point in self.Get_V_Iterator(dim):
-                # This decides when the RHS of the velocity equation 
+                # This decides when the RHS of the velocity equation
                 # requires a addition of the pressure drop
                 # This correction comes from the PBC's and the gradient of the pressure (hence the negative)
-                if (point[dim] == 0): 
+                if (point[dim] == 0):
                     vdof = self.nvd(dim, point)
-                    # Map to trilinos value
-                    if self.using_trilinos:
-                        vdof = self.VMaps[dim].LID(vdof)
-
                     self.V_COR[dim][vdof] -= self.dP[dim]
 
         ###########################
@@ -665,16 +456,13 @@ class Solver():
         ###########################
         for point in self.Get_P_Iterator():
             pdof = self.pdp(point)
-            
+
             # This Pins the pressure solution for the 0th DOF
             if pdof == 0:
-                if self.using_trilinos:
-                    pdof = self.PMap.LID(pdof)
-
                 self.P_COR[pdof] = 1
                 continue
 
-            # Now check to see if were at the edge 
+            # Now check to see if were at the edge
             # (have to add a constant to the RHS)
             # Check each dimension
             point_pressure_correction = 0
@@ -701,12 +489,7 @@ class Solver():
                 if (point[dim] == self.shape[dim] - 1) and (self.pdp(fore_point) != -1):
                     point_pressure_correction += self.dP[dim]
 
-            # If using Trilinos, de-reference to local indexing
-            if self.using_trilinos:
-                # pdof = self.PMap.LID(pdof)
-                self.P_COR.SumIntoGlobalValue(pdof, 0, point_pressure_correction)
-            else:
-                self.P_COR[pdof] += point_pressure_correction
+            self.P_COR[pdof] += point_pressure_correction
 
         # Flag the BC's as setup
         self.bc_is_setup = True
@@ -729,7 +512,7 @@ class Solver():
             # The trace will be -2 * the number of dimensions
             center_value = -2 * self.ndim
 
-            # The 'dof' is the row, and we gather the rows and cols to facilitate trilinos/scipy
+            # The 'dof' is the row, and we gather the rows and cols
             col = []
             val = []
             
@@ -747,7 +530,7 @@ class Solver():
 
             # Stupid Warning, I don't think it is necessary any more . . .
             if center_value == 0:
-                self.dbprint("Something bad probably just happened! %s" % str(point), 1)
+                logger.warning(f"Something bad probably just happened! {point}")
 
             # Add the center point to the list . . .
             col.append(dof)
@@ -764,7 +547,7 @@ class Solver():
             dof = self.nvd(axis, point)
             # #ignore non-degrees of freedom
             # if dof < 0:
-	    #     continue
+            #     continue
             
             # The trace will be -2 * ndim
             center_val = -2 * self.ndim
@@ -796,22 +579,16 @@ class Solver():
         for point in self.Get_P_Iterator():
             # P Degree of freedom
             pd = self.pdp(point)
-            
+
             # Neg is flowing in
             dof = self.vel_dof_grids[dim][point]
             if dof >= 0:
-                if self.using_trilinos:
-                    this_DM.InsertGlobalValues(pd, [-1.], [dof])
-                else:
-                    this_DM[pd, dof] = -1
-        
+                this_DM[pd, dof] = -1
+
             # Positive is flowing out
             dof = rolled_v_dof_grid[point]
             if dof >= 0:
-                if self.using_trilinos:
-                    this_DM.InsertGlobalValues(pd, [1.], [dof])
-                else:
-                    this_DM[pd, dof] = 1
+                this_DM[pd, dof] = 1
         
     def _fill_S(self):
         # Iterate over the grid
@@ -836,11 +613,8 @@ class Solver():
 
             # For each dimension (equation) populate the corresponding matrix row
             for dim, eq in enumerate(point_equations):
-                for dofn, coeff in eq.iteritems():
-                    if self.using_trilinos:
-                        self.ST[dim].InsertGlobalValues(pd, [coeff], [dofn])
-                    else:
-                        self.ST[dim][pd, dofn] = coeff
+                for dofn, coeff in eq.items():
+                    self.ST[dim][pd, dofn] = coeff
 
     def _fill_GM(self, dim):
         rolled_p = roll(self.P_dof_grid, 1, axis=dim)
@@ -848,28 +622,19 @@ class Solver():
         vals_added = 0
         for point in ndimed.full_iter_grid(self.P_dof_grid):
             vel_dof = self.vel_dof_grids[dim][point]
-       
+
             # Still Necessary!
             if vel_dof < 0:
                 continue
 
-            if self.using_trilinos and (not self.VMaps[dim].MyGID(vel_dof)):
-                continue
-
             p1 = self.P_dof_grid[point]
             if p1 >= 0:
-                if self.using_trilinos:
-                    self.GM[dim].InsertGlobalValues(vel_dof, [1.], [p1])
-                else:
-                    self.GM[dim][vel_dof, p1] = 1
+                self.GM[dim][vel_dof, p1] = 1
                 vals_added += 1
 
             p2 = rolled_p[point]
             if p2 >= 0:
-                if self.using_trilinos:
-                    self.GM[dim].InsertGlobalValues(vel_dof, [-1.], [p2])
-                else:
-                    self.GM[dim][vel_dof, p2] = -1
+                self.GM[dim][vel_dof, p2] = -1
                 vals_added += 1
 
     def update_D(self):
@@ -897,35 +662,31 @@ class Solver():
         # This is ok for all dimensions as 
         #     edge -> sa 
         #     sa   -> vol  
-        # so h factor is constant 
+        # so h factor is constant
         self.D_LIN /= self.h
-        # Calculate. the max value (convergence test)
-        
+        # Calculate the max value (convergence test)
+
         # Abs divergence vector (for bi optimization)
-        if self.using_trilinos:
-            self.ABS_D_LIN.Abs(self.D_LIN)
-            self.max_D = self.ABS_D_LIN.MaxValue()
-        else:
-            self.ABS_D_LIN = abs(self.D_LIN)
-            self.max_D = self.ABS_D_LIN.max()        
+        self.ABS_D_LIN = abs(self.D_LIN)
+        self.max_D = self.ABS_D_LIN.max()        
 
     def monolithic_solve(self, method = "default"):
         self.force_la_setup()
         self.force_bc_setup()
 
-        self.dbprint( "Starting Monolithic Solve", 1)
+        logger.info( "Starting Monolithic Solve")
         from scipy.sparse import lil_matrix
         self.MM = lil_matrix((self.dof_number, self.dof_number))
 
         # TODO: using coo you could just add offsets to all the matrices 
         # involved and cat them together making the setup 
-        # faster and trilinos compliant etc . . .
+        # faster etc . . .
 
         # DOF numbers
         pdof = self.P_dof_num
         vns = self.vel_dof_nums #[ndim]
 
-        self.dbprint("\tAdding Pressure Laplace", 2)
+        logger.debug("\tAdding Pressure Laplace")
         # Laplace Matrices
         # PM-L
         xo, yo = (0,0)
@@ -938,7 +699,7 @@ class Solver():
         # VM-L
         self.VM
         for dim in range(self.ndim):
-            self.dbprint("\tAdding Velocity Laplace (%i)" % dim, 2)
+            logger.debug(f"\tAdding Velocity Laplace ({dim})")
             vel_matrix = self.VM[dim]
             xi, yi = vel_matrix.nonzero()
             for x, y in zip(xi, yi):
@@ -950,7 +711,7 @@ class Solver():
         xo = self.PM.shape[0]
         yo = 0
         for dim in range(self.ndim):
-            self.dbprint("\tAdding Gradient (%i)" % dim, 2)
+            logger.debug(f"\tAdding Gradient ({dim})")
             grad_mat = self.GM[dim]
             xi, yi = grad_mat.nonzero()
             for x, y in zip(xi, yi):
@@ -961,27 +722,27 @@ class Solver():
         xo = 0
         yo = self.PM.shape[0]
         for dim in range(self.ndim):
-            self.dbprint("\tAdding S-terms (%i)"%dim,2)
+            logger.info(f"\tAdding S-terms ({dim})", 2)
             s_mat = self.ST[dim]
             xi, yi = s_mat.nonzero()
             for x, y in zip(xi, yi):
                 self.MM[x + xo, y + yo] = -s_mat[x, y] / self.h
             yo += self.VM[dim].shape[0]
 
-        self.dbprint("\tAssembling RHS",2)
+        logger.debug("\tAssembling RHS")
         self.MM_rhs = zeros(self.P_dof_num)
         self.MM_rhs[0:len(self.P_COR)] = self.P_COR
 
         for dim in range(self.ndim):
             self.MM_rhs = concatenate( (self.MM_rhs, self.V_COR[dim] * self.h) )
 
-        # self.dbprint("DEBUG:TODO, Committing matrix and rhs to disk")
+        # logger.info("DEBUG:TODO)
         # from sparse_to_h5 import storeSparseProblem
         # storeSparseProblem(self.MM, self.MM_rhs, "BigMatrixStorage.h5")
 
-        self.dbprint("Converting to CSR",2)
+        logger.debug("Converting to CSR")
         self.MM = self.MM.tocsr()
-        self.dbprint("Solving . . .", 1)
+        logger.info("Solving . . .")
 
         self.solve_start = time.time()
         if self.method == "spsolve" or self.method == "nobi":
@@ -989,14 +750,8 @@ class Solver():
             ans = spsolve(self.MM, self.MM_rhs)
         elif self.method == "bicgstab":
             ans = self.bicgstab(self.MM, self.MM_rhs)
-        # elif self.method == "ruge":
-        #     from pyamg import ruge_stuben_solver
-        #     self.dbprint("Setting up ruge_stuben_solver.", level=2)
-        #     self.rss = self.ruge_stuben_solver( self.MM, max_levels=2)
-        #     self.dbprint(self.rss)
-        #     ans = self.rss.solve(self.MM_rhs, tol=1e-10)
         else:
-            self.dbprint("Solver method not supported!",0)
+            logger.warning("Solver method not supported!")
             raise ValueError
         self.solve_time = time.time() - self.solve_start
 
@@ -1016,7 +771,7 @@ class Solver():
         otherwise it lets it loosen slightly.
         The default paramaters are _extremely_ conservative, but more aggressive setting can vastly accelerate convergence. 
         Selection of understable paramaters can lead to irreversable divergence, so adjust with care'''
-        self.dbprint("Starting Bi Optimization")
+        logger.info("Starting Bi Optimization")
         mx = 1
         if   self.I  < starting_I:
             self.DIV_MULT[:] = 0
@@ -1030,7 +785,7 @@ class Solver():
             dm_copy = array(self.DIV_MULT)
 
             inc_count = sum(1 * lower)
-            self.dbprint("Bi DOF Count Increased %i" % inc_count, 2 )
+            logger.debug(f"Bi DOF Count Increased {inc_count}")
     
             # Some Bi numbers go up
             dm_copy[lower] *= up_mult
@@ -1046,14 +801,12 @@ class Solver():
         mi = min(self.DIV_MULT)
         mx = max(self.DIV_MULT)
         
-        dbinfo = "Bi Optimization Finished - Local Info Mean:%e Min:%e Max:%e" % (me, mi, mx)
-        self.dbprint( dbinfo, 2 )
+        dbinfo = f"Bi Optimization Finished - Local Info Mean:{me:e} Min:{mi:e} Max:{mx:e}"
+        logger.debug( dbinfo)
 
     def sync(self, place=""):
-        if self.using_trilinos:
-            self.dbprint("Trilinos Thread Sync - %s" % place, 3)
-            self.Comm.Barrier()
-            self.dbprint("\tDone.", 3)
+        # No-op for single-threaded scipy solver
+        pass
         
     def iterate(self):
         '''This is the main iteration loop that converges the system.'''
@@ -1065,7 +818,7 @@ class Solver():
         ###############################
         # Solve the Pressure Equation #
         ###############################
-        self.dbprint("\tCalculating P RHS", level = 2)
+        logger.debug("\tCalculating P RHS")
         # This is the Bi contribution
         self.P_RHS[:] = self.DIV_MULT * self.D_LIN
         for d in range(self.ndim):
@@ -1076,7 +829,7 @@ class Solver():
         self.P_RHS[:] = (self.P_RHS / self.h) + self.P_COR
 
         # Solve the pressure Eq.
-        self.dbprint("\tSolving P", level = 2)
+        logger.debug("\tSolving P")
         self.SOLVE_P()
 
         ################################
@@ -1084,12 +837,12 @@ class Solver():
         ################################
         for dim in range(self.ndim):
             # Setup the RHS to the Velocity equation
-            self.dbprint("\tCalculating Grad P (V RHS - %i)" % dim , level = 2)
+            logger.debug(f"\tCalculating Grad P (V RHS - {dim})")
             self.mat_mult(self.GM[dim], self.P_LHS, self.VTEMP[dim])
             self.V_RHS[dim][:] = (self.VTEMP[dim] + self.V_COR[dim]) * self.h
 
             # Solve the velocity Equation in the n'th dimension
-            self.dbprint("\tSolving V - %i" % dim , level = 2)
+            logger.debug(f"\tSolving V - {dim}")
             self.SOLVE_V(dim)
         # Sync
         self.sync("End of Iteration!")
@@ -1118,7 +871,7 @@ class Solver():
         linear forms used during matrix solution
         Useful if you want to seed a solution into the solver'''
 
-        # There is a classier way to do this with "take" from numpy, but isn't Trilinos safe
+        # There is a classier way to do this with "take" from numpy
         for point in self.P_points_list:
             pdof = self.pdp(point)
             self.P_LHS[pdof] = self.P[point]
@@ -1129,36 +882,25 @@ class Solver():
                 self.V_LHS[axis][dof] = self.V_GRIDS[axis][point]
 
     def assign_P_to_obj(self, obj):
-        '''These two functions are used in saving results
-        This implementation makes the core not reliant on tables
-        i.e. hdf5 can open a file, and assign only DOFs from a cerain
-        CPU at a time.'''
-        
+        '''Used for saving pressure results to HDF5.'''
         for point in self.Get_P_Iterator():
             dof = self.pdp(point)
-            if self.using_trilinos:
-                dof = self.PMap.LID(dof)
             obj[point] = self.P_LHS[dof]
-    def assign_V_to_obj(self, axis, obj):
-        '''These two functions are used in saving results
-        This implementation makes the core not reliant on tables
-        i.e. hdf5 can open a file, and assign only DOFs from a cerain
-        CPU at a time.'''
 
+    def assign_V_to_obj(self, axis, obj):
+        '''Used for saving velocity results to HDF5.'''
         for point in self.Get_V_Iterator(axis):
             dof = self.nvd(axis, point)
-            if self.using_trilinos:
-                dof = self.VMaps[axis].LID(dof)
             obj[point] = self.V_LHS[axis][dof]
 
-    def converge(self, stopping_div = 1.0e-8, max_iter = inf, use_biot = True, printing = 0):
+    def converge(self, stopping_div = 1.0e-8, max_iter = inf, use_biot = True):
         '''Run the iterative version of the solver until the first of input stopping criteria are met.'''
         # Make sure we are setup properly
         self.force_la_setup()
         self.force_bc_setup()
 
         self.update_D()
-	# If the current solution is valid
+        # If the current solution is valid
         # (and it isn't the first iteration), break out
         if self.I != 0 and self.max_D < stopping_div:
             return
@@ -1166,20 +908,20 @@ class Solver():
         # Start the timer
         self.solve_start = time.time()
         while True:
-	    # Perform an iteration
+            # Perform an iteration
             self.iterate()
 
-            self.dbprint("\tUpdating Divergence" , level = 2)
+            logger.debug("\tUpdating Divergence" )
             # Update the divergence and max divergence
             self.update_D()
-        
+
             # Update Bi
             if use_biot: self.update_Bi()
 
-	    # Print some status Crap
-            self.dbprint("Iteration:%i, Max Divergence:%e"  % ( self.I, self.max_D ) )
-            
-	    # If it is time to break, do so
+            # Print some status Crap
+            logger.info(f"Iteration:{self.I}, Max Divergence:{self.max_D:e}")
+
+            # If it is time to break, do so
             if self.max_D < stopping_div:
                 self.solve_time = time.time() - self.solve_start
                 break
@@ -1199,37 +941,3 @@ class Solver():
                     "Total_Time":(self.setup_time + self.solve_time),
                     "Identity":gethostname()}
         return ret_dict
-            
-    def nuke_all_trilinos(self):
-        '''Trilinos and the iPython task-client dont clean up swig-attached memory correctly.
-        Why?  Who knows?  But call this to avoid unsightly memory leaks.'''
-        self.sync("Pre-Nuke Sync")
-        if not self.using_trilinos:
-            return
-
-        # Epetra Vectors
-        del self.PMap
-        del self.P_LHS
-        del self.P_RHS
-        del self.P_COR
-        del self.PTEMP
-        del self.Bi      
-        del self.DIV_MULT
-        del self.last_abs_div
-        del self.D_LIN       
-        del self.ABS_D_LIN   
-
-        for x in range(3):
-            del self.VMaps[0]
-            del self.V_LHS[0]
-            del self.V_RHS[0]
-            del self.V_COR[0]
-            del self.VTEMP[0]
-
-        # Epetra Matrices
-        del self.PM
-        for x in range(3):
-            del self.VM[0]
-            del self.DM[0]
-            del self.ST[0]
-            del self.GM[0]

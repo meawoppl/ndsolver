@@ -26,7 +26,7 @@ def process_2d_dir(h5_path, summary_file):
 
     # Calculate the number of points
     data_count = len(files_to_process)
-    print data_count, "files to process."
+    print(f"{data_count} files to process.")
 
     # Allocate a bigish array
     big_array = recarray((data_count,),
@@ -44,12 +44,12 @@ def process_2d_dir(h5_path, summary_file):
     # For each file populate a row of the big array
     for file_num, f in enumerate(files_to_process):
         # Print debugging infoz
-        print file_num, f
+        print(f"{file_num} {f}")
 
         # This block can fail if there is a corrupt file or incomplete simulation data
         try:
             # open the h5 and extract S
-            h5 = openFile(f)
+            h5 = open_file(f)
             s = h5.root.geometry.S[:]
 
             # Permebility tensor bits.
@@ -67,9 +67,9 @@ def process_2d_dir(h5_path, summary_file):
         
         except (IOError, NoSuchNodeError, AttributeError) as inst:
             # Barring failure, add it to the failed list
-            print "Skipping", f
-            print "In process or corrupted?"
-            print inst
+            print(f"Skipping {f}")
+            print("In process or corrupted?")
+            print(inst)
             corrupt.append(f)
             h5.close()
             continue
@@ -86,7 +86,7 @@ def process_2d_dir(h5_path, summary_file):
                                radius)
         
     # Open the summary h5
-    results_h5 = openFile(summary_file, 'w')
+    results_h5 = open_file(summary_file, 'w')
         
     # Create the table and throw it all in there
     res_tab = results_h5.createTable("/", "results", big_array)
@@ -103,7 +103,7 @@ def process_3d_dir(h5_path, summary_file):
 
     # Calculate the number of points
     data_count = len(files_to_process)
-    print data_count, "files to process."
+    print(f"{data_count} files to process.")
 
     # Allocate a bigish array
     big_array = recarray((data_count,),
@@ -122,12 +122,12 @@ def process_3d_dir(h5_path, summary_file):
     # For each file populate a row of the big array
     for file_num, f in enumerate(files_to_process):
         # Print debugging infoz
-        print file_num, f
+        print(f"{file_num} {f}")
 
         # This block can fail if there is a corrupt file or incomplete simulation data
         try:
             # open the h5 and extract S
-            h5 = openFile(f)
+            h5 = open_file(f)
             s = h5.root.geometry.S[:]
 
             # Permebility tensor bits.
@@ -152,9 +152,9 @@ def process_3d_dir(h5_path, summary_file):
         
         except (IOError, NoSuchNodeError, AttributeError) as inst:
             # Barring failure, add it to the failed list
-            print "Skipping", f
-            print "In process or corrupted?"
-            print inst
+            print(f"Skipping {f}")
+            print("In process or corrupted?")
+            print(inst)
             corrupt.append(f)
             h5.close()
             continue
@@ -173,14 +173,14 @@ def process_3d_dir(h5_path, summary_file):
     big_array = big_array[big_array['path'] != '']
         
     # Open the summary h5
-    results_h5 = openFile(summary_file, 'w')
+    results_h5 = open_file(summary_file, 'w')
         
     # Create the table and throw it all in there
     res_tab = results_h5.createTable("/", "results", big_array)
 
     for c in corrupt:
-        print c
-    print "Problems encountered in %i files" % len(corrupt)
+        print(c)
+    print(f"Problems encountered in {len(corrupt)} files")
 
     # Close the summary h5
     results_h5.close()
