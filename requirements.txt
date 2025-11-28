@@ -14,6 +14,10 @@ Pillow>=10.0
 # Testing
 pytest>=7.0
 
+# Optional: JAX for GPU-accelerated solvers
+# pip install jax jaxlib  # CPU only
+# pip install jax[cuda12]  # For NVIDIA GPU support
+
 # Optional: for development
 # matplotlib>=3.7  # visualization
 # ipython>=8.0     # interactive debugging

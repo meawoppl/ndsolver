@@ -351,6 +351,42 @@ class Solver():
     def _splu_V(self, dim, *args, **kwargs):
         self.V_LHS[dim] = self.VM_LU[dim].solve(self.V_RHS[dim])
 
+    # scipy bicgstab
+    def _bicgstab_P(self, *args, **kwargs):
+        result, info = self.bicgstab(self.PM, self.P_RHS)
+        if info != 0:
+            logger.warning(f"bicgstab P solve did not converge (info={info})")
+        self.P_LHS = result
+    def _bicgstab_V(self, dim, *args, **kwargs):
+        result, info = self.bicgstab(self.VM[dim], self.V_RHS[dim])
+        if info != 0:
+            logger.warning(f"bicgstab V[{dim}] solve did not converge (info={info})")
+        self.V_LHS[dim] = result
+
+    # JAX solvers (GPU-accelerated)
+    @staticmethod
+    def _scipy_to_jax_bcoo(scipy_matrix):
+        """Convert scipy sparse matrix to JAX BCOO format."""
+        import jax.numpy as jnp
+        from jax.experimental.sparse import BCOO
+        coo = scipy_matrix.tocoo()
+        indices = jnp.stack([jnp.array(coo.row), jnp.array(coo.col)], axis=1)
+        return BCOO((jnp.array(coo.data), indices), shape=coo.shape)
+
+    def _jax_solve_P(self, *args, **kwargs):
+        import numpy
+        import jax.numpy as jnp
+        rhs = jnp.array(self.P_RHS)
+        result, info = self._jax_solve_fn(self.PM_JAX, rhs)
+        self.P_LHS = numpy.array(result)
+
+    def _jax_solve_V(self, dim, *args, **kwargs):
+        import numpy
+        import jax.numpy as jnp
+        rhs = jnp.array(self.V_RHS[dim])
+        result, info = self._jax_solve_fn(self.VM_JAX[dim], rhs)
+        self.V_LHS[dim] = numpy.array(result)
+
     def test_matrices(self):
         def vec_nnz(vec):
             return abs(vec).sum()
@@ -430,6 +466,43 @@ class Solver():
 
             self.SOLVE_P = self._splu_P
             self.SOLVE_V = self._splu_V
+
+        # Iterative BiCGSTAB solver - good for large systems
+        elif self.method == 'bicgstab':
+            from scipy.sparse.linalg import bicgstab
+            self.bicgstab = bicgstab
+            logger.debug("bicgstab selected")
+            self.PM = self.PM.tocsr()
+
+            for dim in range(self.ndim):
+                self.VM[dim] = self.VM[dim].tocsr()
+
+            self.SOLVE_P = self._bicgstab_P
+            self.SOLVE_V = self._bicgstab_V
+
+        # JAX GPU-accelerated iterative solvers
+        elif self.method in ('jax_bicgstab', 'jax_gmres'):
+            import jax
+            from jax.scipy.sparse.linalg import bicgstab as jax_bicgstab
+            from jax.scipy.sparse.linalg import gmres as jax_gmres
+
+            solver_fn = jax_bicgstab if self.method == 'jax_bicgstab' else jax_gmres
+            self._jax_solve_fn = jax.jit(solver_fn)
+            logger.debug(f"{self.method} selected (GPU-accelerated, JIT compiled)")
+
+            # Convert and cache JAX matrices at setup time
+            self.PM = self.PM.tocsr()
+            self.PM_JAX = self._scipy_to_jax_bcoo(self.PM)
+            logger.debug("Cached JAX pressure matrix")
+
+            self.VM_JAX = [None] * self.ndim
+            for dim in range(self.ndim):
+                self.VM[dim] = self.VM[dim].tocsr()
+                self.VM_JAX[dim] = self._scipy_to_jax_bcoo(self.VM[dim])
+                logger.debug(f"Cached JAX velocity matrix {dim}")
+
+            self.SOLVE_P = self._jax_solve_P
+            self.SOLVE_V = self._jax_solve_V
 
         else:
             logger.warning(f"Solver type '{self.method}' not recognized!!!!")
