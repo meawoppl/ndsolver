@@ -73,6 +73,15 @@ class TestSolverInstantiation:
             s = Solver(simple_2d_domain, (1.0, 0.0), sol_method=method)
             assert s is not None
 
+    def test_jax_solver_methods(self, simple_2d_domain):
+        """Test that JAX solver methods can be selected (if JAX installed)."""
+        from ndsolver import Solver
+        pytest.importorskip("jax")
+
+        for method in ['jax_bicgstab', 'jax_gmres']:
+            s = Solver(simple_2d_domain, (1.0, 0.0), sol_method=method)
+            assert s is not None
+
 
 class TestSolverConvergence:
     """Test solver convergence on simple problems."""
