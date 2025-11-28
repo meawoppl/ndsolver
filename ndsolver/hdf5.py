@@ -1,10 +1,10 @@
+import logging
 import time
-try:
-    from tables import *
-except ImportError:
-    print "pytables is not installed or LD_PATH does not have the libraries necessary"
-    import sys
-    sys.exit()
+
+from tables import (open_file, Float32Col, Float64Atom, Int8Atom, IsDescription,
+                    NoSuchNodeError, UInt8Atom)
+
+logger = logging.getLogger(__name__)
 
 
 # Keeping things from getting sloppy 
@@ -22,29 +22,29 @@ allowed_meta_tags = ["P_and_V_DOF_Number",
 
 def forceGroup(h5, where, name, title):
     try:
-        h5.getNode(where, name=name)
+        h5.get_node(where, name=name)
     except NoSuchNodeError:
-        h5.createGroup(where, name, title)
-    return h5.getNode(where, name=name)
+        h5.create_group(where, name, title)
+    return h5.get_node(where, name=name)
 
 def forceCArray(h5, where, name, atom, shape, title):
     try:
-        h5.getNode(where, name=name)
+        h5.get_node(where, name=name)
     except NoSuchNodeError:
-        h5.createCArray(where, name, atom=atom, shape=shape, title=title)
-    return h5.getNode(where, name=name)
+        h5.create_carray(where, name, atom=atom, shape=shape, title=title)
+    return h5.get_node(where, name=name)
     
 
 def get_S(filename):
     '''Quick and dirty way to get the solid array from a h5 file given a h5 object or a filename'''
-    h5 = openFile(filename, "a")
+    h5 = open_file(filename, "a")
     S = h5.root.geometry.S[:]
     h5.close()
     return S
 
 def write_S(path, S):
     # Open h5
-    h5 = openFile(path,'a')
+    h5 = open_file(path,'a')
     # Create groups if necessary
     geom = forceGroup(h5, "/", "geometry", 'details of the input geometry')
 
@@ -62,12 +62,12 @@ def write_S(path, S):
 
 def write_geometry(filename, points, radaii):
     # STUPID CHECK
-    print len(radaii), points.shape[0]
+    print(len(radaii), points.shape[0])
     if len(radaii) != points.shape[0]:
         raise ValueError("Mismatch between points and radaii!")
 
     # Open the file
-    h5 = openFile(filename, 'a')
+    h5 = open_file(filename, 'a')
     geom = forceGroup(h5, "/",  "geometry", 'details of the input geometry')
     ndim = points.shape[1]
 
@@ -88,7 +88,7 @@ def write_geometry(filename, points, radaii):
         raise ValueError("3d is highest supported hy hdf5 writing module!")
 
     # create the geometry group if necessary
-    obstacles = h5.createTable(geom, 'obstacles', Obstacle, 'radii and centers of solid obstacles')
+    obstacles = h5.create_table(geom, 'obstacles', Obstacle, 'radii and centers of solid obstacles')
     obstacle = obstacles.row
 
     # Populate the points table
@@ -110,11 +110,11 @@ def write_geometry(filename, points, radaii):
 
 def has_dP_sim(filepath, dP):
     '''Check to see if a h5 file has a simulation for a given pressure drop . . .'''
-    h5 = openFile(filepath, "a")
+    h5 = open_file(filepath, "a")
     sim_dim = dP_to_dim(dP)
-    sim_name = "%s_sim" % sim_dim
+    sim_name = f"{sim_dim}_sim"
     try:
-        h5.getNode("/simulations/%s_sim" % sim_dim)
+        h5.get_node(f"/simulations/{sim_dim}_sim")
         has_group = True
     except NoSuchNodeError:
         has_group = False
@@ -127,9 +127,9 @@ def has_dP_sim(filepath, dP):
 
 def get_dP_sim(h5, dP):
     sim_dim  = dP_to_dim(dP)
-    sim_name = "%s_sim" % sim_dim
+    sim_name = f"{sim_dim}_sim"
 
-    return h5.getNode("/simulations/%s_sim" % sim_dim)
+    return h5.get_node(f"/simulations/{sim_dim}_sim")
 
 def dP_to_dim(dP):
     # Ugleeeee!
@@ -153,14 +153,14 @@ def get_sim_p_vs(h5, dP, shape):
 
     # the code below works . . . . urgle . . .
     sim_dim = dP_to_dim(dP)
-    sim_name = "%s_sim" % sim_dim
+    sim_name = f"{sim_dim}_sim"
     
     ###########################
     # Table constructing tedium
     ###########################
     # For the simulation, make a group if necessary
     
-    sim_title = 'periodic Stokes flow simulation for pressure drop in %s-direction' % sim_dim
+    sim_title = f'periodic Stokes flow simulation for pressure drop in {sim_dim}-direction'
     this_sim = forceGroup(h5, sims, sim_name, sim_title)
     
     # Make the P array if necessary
@@ -180,95 +180,12 @@ def get_sim_p_vs(h5, dP, shape):
         dn = dim_names[dim_num]
 
         # if the array does not exist, make it
-        v_title = title='%s-face-centered %s-component of velocity' % (dn, dn)
+        v_title = f'{dn}-face-centered {dn}-component of velocity'
         v_Carray = forceCArray(h5, this_sim, v_name, Float64Atom(), shape, v_title)
         vs.append(v_Carray)
 
     return this_sim, p, vs
 
-def set_save_token(h5_filename, number):
-    h5 = openFile(h5_filename, 'a')
-    h5.root._v_attrs.last_cpu = number
-    h5.close()
-
-def get_save_token(h5_filename):
-    h5 = openFile(h5_filename, 'r')
-    num = h5.root._v_attrs.last_cpu
-    h5.close()
-    return num
-
-def del_save_token(h5_filename):
-    h5 = openFile(h5_filename, 'a')
-    del h5.root._v_attrs.last_cpu
-    h5.close()
- 
-def h5_ready_for_me(h5_filename, myID):
-    if myID == 0:
-        return True
-    # If the results from the cpu before me are visable
-    if get_save_token(h5_filename) == (myID - 1):
-        sleep(1)
-        return True
-    
-    # Otherwise
-    return False
-
-def wait_for_token(h5_filename, solver):
-    # Thread 0 waits for no man!
-    if solver.myID == 0:
-        return
-
-    # Others wait until token is visable
-    while(True):
-        number_up = get_save_token(h5_filename)
-        if number_up != solver.myID:
-            solver.dbprint("Waiting my Turn! Current number up = %i" % number_up)
-            time.sleep(0.5)
-        if number_up != solver.myID:
-            solver.dbprint("Its My Turn!")
-            time.sleep(0.5)
-            break
-            
-# This one should work for both, but will be slower!
-def trilinos_h5_writer(savepath, solver):
-    # Write the sim results structure
-    # 0th cpu writes the initial table structure:
-    for cpu in range(solver.cpuCount):
-        solver.sync("Saving Loop Sync")
-        if (solver.myID != cpu):
-            continue
-
-        wait_for_token(savepath, solver)
-
-        # Foe each thread
-        solver.dbprint("Writing Results for thread", 2)
-
-        # Open h5 file
-        h5 = openFile(savepath, mode="a")
-
-        # This creates the results path, or grabs it if already created
-        sim, p, vs = get_sim_p_vs(h5, solver.dP, solver.shape)
-
-        solver.dbprint("Saving My Pressure", 2)
-        solver.assign_P_to_obj(p)
-
-        for n, v in enumerate(vs):
-            solver.dbprint("Saving My Velocity (%i)" % n)
-            solver.assign_V_to_obj(n, v)
-        
-        h5.flush()
-        h5.close()
-
-        set_save_token(savepath, solver.myID)
-
-        # For each thread
-        solver.dbprint("File Closed by thread", 2)        
-
-    solver.sync("Parallel save completed")
-    # Nuke the save token to avoid confusing future instances
-    if solver.myID == 0: 
-        del_save_token(savepath)
-        
 
 def wmd(sim_obj, meta_data):
     '''Not Designed to be Human Called'''
@@ -277,16 +194,16 @@ def wmd(sim_obj, meta_data):
     #TODO: SVN version number?
     
     # Put the passed metadata into the h5 object
-    for key, val in meta_data.iteritems():
+    for key, val in meta_data.items():
         # Make sure its valid
         if key not in allowed_meta_tags:
-            raise ValueError("%s is not a valid metadata tag!" % key)
+            raise ValueError(f"{key} is not a valid metadata tag!")
         # Add the metadata bit
         setattr(meta, key, val)
     
 
 def write_meta(save_path, solver):    
-    h5 = openFile(save_path, "a")
+    h5 = open_file(save_path, "a")
     sim, p, vs = get_sim_p_vs(h5, solver.dP, solver.shape)
 
     wmd(sim, solver.getMetaDict())
@@ -306,7 +223,7 @@ def h5_writer(path, dP, P, Vs):
         raise ValueError("Pressure drop and simulation dimension mismatch!")
 
     # Open h5 file
-    h5 = openFile(path, mode="a")
+    h5 = open_file(path, mode="a")
 
     # h5 C Array objects
     sim, p, vs = get_sim_p_vs(h5, dP, P.shape)
@@ -324,32 +241,21 @@ def h5_writer(path, dP, P, Vs):
     h5.close()
 
 def write_solver_to_h5(file_path, solver):
-    # Only main thread has results  . . .
-    # Convert the internals back into grids
-    solver.dbprint("Saving to hdf5 file", 1)
+    """Save solver results to HDF5 file."""
+    logger.info("Saving to hdf5 file")
 
-    # This is true for single thread execution (non-trilinos)
-    # AND the 0th thread of trilinos
-    if solver.myID == 0:
-        # write sim results structure
-        write_meta(file_path, solver)
+    # Write sim results structure and metadata
+    write_meta(file_path, solver)
 
-        # Write the S and geometry etc. and close
-        solver.dbprint("Thread writing S and metadata")
-        write_S(file_path, solver.S)
-
-    # Make sure above is complete before moving on    
-    # AKA make sure thread one has written S, and metadata first
-    solver.sync()
+    # Write the S and geometry
+    logger.info("Writing S and metadata")
+    write_S(file_path, solver.S)
 
     # Write the simulation results
-    if solver.using_trilinos:
-        trilinos_h5_writer(file_path, solver)
-    else:
-        solver.regrid()        
-        h5_writer(file_path, solver.dP, solver.P, solver.V_GRIDS)
+    solver.regrid()
+    h5_writer(file_path, solver.dP, solver.P, solver.V_GRIDS)
 
-    solver.dbprint("Completed Save", 1)
+    logger.info("Completed Save")
     
 
 def ipython_task_to_h5(task):
@@ -362,7 +268,7 @@ def ipython_task_to_h5(task):
     v_grids = r["vgrids"]
 
     # write metadata
-    h5 = openFile(r["task_path"], 'a')
+    h5 = open_file(r["task_path"], 'a')
     sim, p, vs = get_sim_p_vs(h5, r["dP"], r["P"].shape)
 
     wmd(sim, r["meta"])    

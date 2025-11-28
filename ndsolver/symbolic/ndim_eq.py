@@ -3,8 +3,8 @@ from numpy import array, zeros, roll, \
                   logical_not, int32, int64, ones, \
                   ndenumerate, where, zeros_like
 
-from Equation import Equation
-import ndimed
+from .Equation import Equation
+from . import ndimed
 
 def ndcodex(dim):
     if dim in codex:
@@ -126,7 +126,7 @@ def comp_mom_eq(grids, point):
     # Stupid Check!
     for grid in grids:
         if grid.shape != s or len(grid.shape) != len(point):
-            print "Shape mismatch!"
+            print("Shape mismatch!")
             raise TypeError
 
     # Initialize the equations
@@ -162,7 +162,7 @@ def div_eq(grids, point):
     # Stupid Check!
     for grid in grids:
         if grid.shape != s or len(grid.shape) != len(point):
-            print "Shape mismatch!"
+            print("Shape mismatch!")
             raise TypeError
 
     # PCB correction
@@ -449,5 +449,5 @@ if __name__ == "__main__":
     grids = velocity_dofs(sf)
 
     for x, grid in enumerate(div_matrices(pdof, grids)):
-        print x, grids[x]
-        print grid.todense()
+        print(x, grids[x])
+        print(grid.todense())

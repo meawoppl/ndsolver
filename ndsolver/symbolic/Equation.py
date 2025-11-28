@@ -3,7 +3,7 @@ class Equation(dict):
         sum_dict = Equation()
         sum_dict.update(self)
 
-        for key, val in o_dict.iteritems():
+        for key, val in o_dict.items():
             if key in sum_dict:
                 sum_dict[key] += val
             else:
@@ -16,7 +16,7 @@ class Equation(dict):
         sum_dict = Equation()
         sum_dict.update(self)
         
-        for key, val in o_dict.iteritems():
+        for key, val in o_dict.items():
             if key in sum_dict:
                 sum_dict[key] -= val
             else:
@@ -27,32 +27,31 @@ class Equation(dict):
 
 
     def __mul__(self, mul):
-        for key, val in self.iteritems():
+        for key, val in self.items():
             self[key] *= mul
 
         self.zero_out()
         return self
 
-    def __div__(self, div):
+    def __truediv__(self, div):
         if div == 0:
             raise ZeroDivisionError
         
-        for key, val in self.iteritems():
+        for key, val in self.items():
             self[key] /= div
 
         self.zero_out()
         return self
 
     def zero_out(self):
-        keys = self.keys()
-        for k in keys:
+        for k in list(self.keys()):
             if self[k] == 0:
                 del self[k]
 
 
     def __str__(self):
         print_list = []
-        for key, val in self.iteritems():
+        for key, val in self.items():
             print_list.append( "(#" + str(key) + ")*" + str(val))
 
         return " + ".join( print_list )
@@ -71,9 +70,9 @@ if __name__ == "__main__":
     B[3] = 1
     B[1] = 3
 
-    print "A", A
-    print "B", B
-    print "A + B", A + B
-    print "A - B", A - B
-    print "-B", Equation() - B
+    print("A", A)
+    print("B", B)
+    print("A + B", A + B)
+    print("A - B", A - B)
+    print("-B", Equation() - B)
     

@@ -1,8 +1,8 @@
- 
-from scipy import random, array, zeros, roll, \
-                  logical_and, logical_or, cumsum, \
-                  logical_not, int64, ones, random, sparse
-from Equation import Equation
+import numpy as np
+from numpy import array, zeros, roll, logical_and, logical_or, cumsum, logical_not, int64, ones
+from scipy import sparse
+
+from .Equation import Equation
 
 global codex
 codex = array([[  0,  1,  2 ],
@@ -76,7 +76,7 @@ def momentum_eq(dof_grid, x, y):
 def comp_mom_eq(u_dof_grid, v_dof_grid, x, y):
     # Roll coord system if necessary
     if u_dof_grid.shape != v_dof_grid.shape:
-        print "Shape mismatch!"
+        print("Shape mismatch!")
         raise TypeError
     s = u_dof_grid.shape
 
@@ -84,7 +84,7 @@ def comp_mom_eq(u_dof_grid, v_dof_grid, x, y):
 
     # Stupid check!
     if s != u_dof_grid.shape or s != v_dof_grid.shape:
-        raise ValueError,  "Shapes of all DOF grids must match!"
+        raise ValueError("Shapes of all DOF grids must match!")
 
     # six momentum equations here
     m_left    = momentum_eq( u_dof_grid, x,   y   )
@@ -94,10 +94,10 @@ def comp_mom_eq(u_dof_grid, v_dof_grid, x, y):
     m_right   = momentum_eq( u_dof_grid, x+1, y   )
     m_top     = momentum_eq( v_dof_grid, x,   y+1 )
 
-    print "ML", m_left
-    print "MR", m_right
-    print "MT", m_top
-    print "MB", m_bottom
+    print("ML", m_left)
+    print("MR", m_right)
+    print("MT", m_top)
+    print("MB", m_bottom)
 
     # Not odbvious but these are the U, Vcomponents . . .
     return (m_right-m_left), (m_top-m_bottom)
@@ -205,7 +205,7 @@ def index_coeff(equation, dofs):
     indexs = (ones(dofs.shape,dtype=int64).cumsum() - 1).flatten()
 
     # Kinda hackedy
-    for dof_num, coeff in equation.iteritems():
+    for dof_num, coeff in equation.items():
         flat_index_number = indexs[(dofs==dof_num).flatten()]
         index_list2.append(flat_index_number[0])
         coeff_list2.append( coeff )
@@ -222,7 +222,7 @@ def index_coeff(equation, dofs):
 #     index_list = []
 #     coeff_list = []
 
-#     for dof_num, coeff in equation.iteritems():
+#     for dof_num, coeff in equation.items():
 #         index_list.append( flats.index( dof_num ) )
 #         coeff_list.append( coeff )
 
@@ -233,7 +233,7 @@ def index_coeff(equation, dofs):
 
 def s_term(udof, vdof, x, y):
     if udof[x,y] == -3 or vdof[x,y] == -3:
-        print "Solid square!!!"
+        print("Solid square!!!")
         raise ValueError
     
     u_c, v_c = comp_mom_eq( udof, vdof, x, y )
@@ -272,10 +272,10 @@ def s_term_matricies(pdof, udof, vdof, zero_rows = [0]):
 
         u_eq, v_eq = s_term(udof, vdof, x, y)
 
-        for dofn, coeff in u_eq.iteritems():
+        for dofn, coeff in u_eq.items():
             U_RHS_M[ dofn, pd ] = coeff
 
-        for dofn, coeff in v_eq.iteritems():
+        for dofn, coeff in v_eq.items():
             V_RHS_M[ dofn, pd ] = coeff
 
     return U_RHS_M.tocsc(), V_RHS_M.tocsc()
@@ -367,16 +367,16 @@ if __name__ == "__main__":
     ud = velocity_dof(sf,0)
     vd = velocity_dof(sf,1)
 
-    print "SOLID"
-    print sf
+    print("SOLID")
+    print(sf)
 
-    print "UDOF"
-    print ud
-    
-    print "VDOF"
-    print vd
-    
-    print s_term(ud,vd,2,2)
+    print("UDOF")
+    print(ud)
+
+    print("VDOF")
+    print(vd)
+
+    print(s_term(ud,vd,2,2))
 
 
     

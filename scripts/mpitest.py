@@ -1,12 +1,12 @@
 from scipy import *
-from core import Solver
-import hdf5
+from ndsolver.core import Solver
+from ndsolver import hdf5
 
 test = zeros((5,5))
 
 test[2,2] = 1
 
-sol = Solver(test, (1,0), sol_method="trilinos", printing=3)
+sol = Solver(test, (1,0), sol_method="trilinos")
 
 sol.converge()
 

@@ -1,0 +1,19 @@
+# ndsolver dependencies
+# Python 3.11 recommended
+
+# Core numerical computing
+numpy>=1.24,<2.0
+scipy>=1.11,<2.0
+
+# HDF5 file I/O
+tables>=3.8
+
+# Image loading (replaces deprecated scipy.misc.imread)
+Pillow>=10.0
+
+# Testing
+pytest>=7.0
+
+# Optional: for development
+# matplotlib>=3.7  # visualization
+# ipython>=8.0     # interactive debugging
