@@ -351,6 +351,18 @@ class Solver():
     def _splu_V(self, dim, *args, **kwargs):
         self.V_LHS[dim] = self.VM_LU[dim].solve(self.V_RHS[dim])
 
+    # scipy bicgstab
+    def _bicgstab_P(self, *args, **kwargs):
+        result, info = self.bicgstab(self.PM, self.P_RHS)
+        if info != 0:
+            logger.warning(f"bicgstab P solve did not converge (info={info})")
+        self.P_LHS = result
+    def _bicgstab_V(self, dim, *args, **kwargs):
+        result, info = self.bicgstab(self.VM[dim], self.V_RHS[dim])
+        if info != 0:
+            logger.warning(f"bicgstab V[{dim}] solve did not converge (info={info})")
+        self.V_LHS[dim] = result
+
     def test_matrices(self):
         def vec_nnz(vec):
             return abs(vec).sum()
@@ -430,6 +442,19 @@ class Solver():
 
             self.SOLVE_P = self._splu_P
             self.SOLVE_V = self._splu_V
+
+        # Iterative BiCGSTAB solver - good for large systems
+        elif self.method == 'bicgstab':
+            from scipy.sparse.linalg import bicgstab
+            self.bicgstab = bicgstab
+            logger.debug("bicgstab selected")
+            self.PM = self.PM.tocsr()
+
+            for dim in range(self.ndim):
+                self.VM[dim] = self.VM[dim].tocsr()
+
+            self.SOLVE_P = self._bicgstab_P
+            self.SOLVE_V = self._bicgstab_V
 
         else:
             logger.warning(f"Solver type '{self.method}' not recognized!!!!")

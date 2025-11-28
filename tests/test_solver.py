@@ -69,7 +69,7 @@ class TestSolverInstantiation:
         """Test that different solver methods can be selected."""
         from ndsolver import Solver
 
-        for method in ['spsolve', 'splu']:
+        for method in ['spsolve', 'splu', 'bicgstab']:
             s = Solver(simple_2d_domain, (1.0, 0.0), sol_method=method)
             assert s is not None
 
@@ -95,6 +95,17 @@ class TestSolverConvergence:
         """Test convergence with splu method."""
         from ndsolver import Solver
         s = Solver(small_2d_domain, (1.0, 0.0), sol_method='splu')
+        s.converge()
+        assert s.max_D < 1e-6  # should converge
+
+    @pytest.mark.slow
+    def test_converge_2d_bicgstab(self, small_2d_domain):
+        """Test convergence with bicgstab iterative method.
+
+        Note: bicgstab is significantly slower than direct solvers for small problems.
+        """
+        from ndsolver import Solver
+        s = Solver(small_2d_domain, (1.0, 0.0), sol_method='bicgstab')
         s.converge()
         assert s.max_D < 1e-6  # should converge
 
