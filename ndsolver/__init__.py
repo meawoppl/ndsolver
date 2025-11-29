@@ -1,6 +1,6 @@
 import logging
 
-from .core import Solver
+from .core import Solver as Solver
 
 __version__ = "0.2.0"
 

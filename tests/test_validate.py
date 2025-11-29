@@ -1,6 +1,5 @@
-import numpy as np
-from numpy import (allclose, all, array, arctan2, around, byte, c_, dot,
-                   linspace, mgrid, ones, outer, pi, roll, sin, sqrt, zeros)
+from numpy import (allclose, all, array, arctan2, byte, c_, dot,
+                   linspace, mgrid, outer, pi, roll, sin, sqrt, zeros)
 from scipy import linalg
 from ndsolver.core import Solver
 from ndsolver.symbolic import ndim_eq
@@ -14,7 +13,7 @@ test_matrix[2,2] = 1
 three_test = zeros((5,5,5))
 three_test[:,2,2] = 1
 
-correct_P = array([[ 1.  ,  1.05,  1.15,  1.05,  1.  ],
+correct_pressure = array([[ 1.  ,  1.05,  1.15,  1.05,  1.  ],
                    [ 0.85,  1.  ,  1.55,  1.  ,  0.85],
                    [ 0.55,  0.55,  0.  ,  0.55,  0.55],
                    [ 0.25,  0.1 , -0.45,  0.1 ,  0.25],
@@ -78,15 +77,15 @@ def test_2d(sol_method='default'):
 
    # Reading is threadsafe!
    h5 = tables.open_file("autotest.h5")
-   test_P = h5.root.simulations.x_sim.P[:]
+   _test_pressure = h5.root.simulations.x_sim.P[:]  # Read to verify file integrity
    h5.close()
 
-   if not allclose(sol.P, correct_P):
+   if not allclose(sol.pressure, correct_pressure):
       print("Incorrect:")
-      print(sol.P)
+      print(sol.pressure)
       print()
       print("Correct:")
-      print(correct_P)
+      print(correct_pressure)
       raise ValueError("Incorrect answer for 2-d test case\n See 'autotest.h5'")
    else:
       print("Test Successful!!!")
@@ -117,7 +116,7 @@ def shift_test(sol_method='default'):
          sol.sync()
          # Reading is threadsafe!
          h5 = tables.open_file("autotest.h5")
-         test_P = h5.root.simulations.x_sim.P[:]
+         _test_pressure = h5.root.simulations.x_sim.P[:]  # Read to verify file integrity
          test_u = h5.root.simulations.x_sim.u[:]
          test_v = h5.root.simulations.x_sim.v[:]
          h5.close()
@@ -142,7 +141,7 @@ def test_3d(sol_method='default'):
     sol.converge()
     sol.regrid()
 
-    if not allclose(sol.P[2,:,:], correct_P):
+    if not allclose(sol.pressure[2,:,:], correct_pressure):
         raise ValueError("Incorrect answer for 3-d test case")
     else:
         print("Test Successful!!!")
@@ -164,7 +163,7 @@ def test_helix(sol_method="default"):
     sol = Solver(solid, (0.,0.,1.), sol_method=sol_method)
     sol.converge()
 
-    hdf5.write_S("semi-helix.h5", solid)
+    hdf5.write_s("semi-helix.h5", solid)
     hdf5.write_solver_to_h5("semi-helix.h5", sol)
 
 def test_tables(sol_method='default'):
@@ -202,7 +201,6 @@ def helix():
 
 def test_all_2d_config(sol_method='default'):
     print("Now running all cell configurations:")
-    cfg_iter = []
     for x in range(1, 256):
         solid = ndim_eq.make_safe_config_test(x)
         print(f"Starting Config {x}")
@@ -216,7 +214,7 @@ def test_all_2d_config(sol_method='default'):
         finish_time = time.time()
 
         print(f"Config {x} - ")
-        print(f"\t{a.I} iterations. ")
+        print(f"\t{a.iteration_count} iterations. ")
         print(f"\tSetup Time:{setup_time - start_time}")
         print(f"\tConverge Time:{finish_time - setup_time}")
 
@@ -227,12 +225,12 @@ def test_monolithic_2d(sol_method='default'):
     s = Solver(test_matrix, (1,0))
     s.monolithic_solve()
     s.regrid()
-    if not allclose(s.P, correct_P):
+    if not allclose(s.pressure, correct_pressure):
         print("Answer Different!")
         print("Correct:")
-        print(correct_P)
+        print(correct_pressure)
         print("Wrng!:")
-        print(s.P)
+        print(s.pressure)
         raise ValueError("Unittest failure")
     print("Test Sucessful!")
 
@@ -269,13 +267,13 @@ def do_validation_runs(domain_width=50., count=10, filename="validation.h5"):
         r_group = h5.create_group("/", table_name, title=table_title)
         h5.create_carray(r_group, "S", tables.Int8Atom(), domain_shape)
         for name in ["P", "u", "v"]:
-            tab_atom = tables.Atom.from_dtype(s.P.dtype)
+            tab_atom = tables.Atom.from_dtype(s.pressure.dtype)
             h5.create_carray(r_group, name, tab_atom, domain_shape)
 
         r_group.S[:] = solid
-        r_group.P[:] = s.P
-        r_group.u[:] = s.V_GRIDS[0]
-        r_group.v[:] = s.V_GRIDS[1]
+        r_group.P[:] = s.pressure
+        r_group.u[:] = s.v_grids[0]
+        r_group.v[:] = s.v_grids[1]
 
         meta = r_group._v_attrs
 
@@ -290,7 +288,7 @@ if __name__ == "__main__":
 
    # unittest.main()
    # test_all()
-   # hdf5.write_S("oc.h5", oblique_111cylinder())
+   # hdf5.write_s("oc.h5", oblique_111cylinder())
    # print test_helix()
    # test_helix()
    # test_tube()

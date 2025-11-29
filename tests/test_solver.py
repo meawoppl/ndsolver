@@ -138,7 +138,7 @@ class TestSymbolicModule:
 
     def test_equation_class(self):
         """Test the Equation dictionary class."""
-        from ndsolver.symbolic.Equation import Equation
+        from ndsolver.symbolic.equation import Equation
 
         eq1 = Equation()
         eq1[1] = 2.0

@@ -1,8 +1,9 @@
-from numpy import arange, array, c_, dot, ndenumerate, newaxis, mgrid, zeros, zeros_like
+from numpy import arange, array, c_, dot, ndenumerate, mgrid, zeros_like
 
 # Return an iterator of tuples of points in the grid
-def iter_grid(grid, strip_non_dof = True, my_min_dof=0, my_max_dof=-1):
-    if my_max_dof == -1: my_max_dof = array(grid.shape).prod
+def iter_grid(grid, strip_non_dof=True, my_min_dof=0, my_max_dof=-1):
+    if my_max_dof == -1:
+        my_max_dof = array(grid.shape).prod
     slice_count = len(grid.shape)
     slice_tup = ()
     
@@ -37,8 +38,10 @@ def full_iter_grid(grid):
     
 def pruned_iterator(grid, my_min_dof, my_max_dof):
     for pt, val in ndenumerate(grid):
-        if val < my_min_dof: continue
-        if val > my_max_dof: raise StopIteration()
+        if val < my_min_dof:
+            continue
+        if val > my_max_dof:
+            raise StopIteration()
         yield pt
 
 # def pruned_iterator(grid, my_min_dof, my_max_dof):

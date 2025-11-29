@@ -126,41 +126,41 @@ def main():
         else:
             print(f"{f} is not an HDF5 file, trying as image...")
             img = Image.open(f).convert('L')
-            S = (np.array(img) < 128).astype(np.int8)
-            S = S[::-1].T
+            solid = (np.array(img) < 128).astype(np.int8)
+            solid = solid[::-1].T
             ndim = 2
-            hdf5.write_S(save_path, S)
+            hdf5.write_s(save_path, solid)
 
         print(f"Dimension: {ndim}")
 
         # Build pressure drop list based on dimensionality
-        dPs = []
+        pressure_drops = []
         if options.x:
             if ndim == 2:
-                dPs.append((1, 0))
+                pressure_drops.append((1, 0))
             elif ndim == 3:
-                dPs.append((1, 0, 0))
+                pressure_drops.append((1, 0, 0))
             elif ndim == 4:
-                dPs.append((1, 0, 0, 0))
+                pressure_drops.append((1, 0, 0, 0))
 
         if options.y:
             if ndim == 2:
-                dPs.append((0, 1))
+                pressure_drops.append((0, 1))
             elif ndim == 3:
-                dPs.append((0, 1, 0))
+                pressure_drops.append((0, 1, 0))
             elif ndim == 4:
-                dPs.append((0, 1, 0, 0))
+                pressure_drops.append((0, 1, 0, 0))
 
         if options.z:
             if ndim == 3:
-                dPs.append((0, 0, 1))
+                pressure_drops.append((0, 0, 1))
             elif ndim == 4:
-                dPs.append((0, 0, 1, 0))
+                pressure_drops.append((0, 0, 1, 0))
 
-        for dP in dPs:
-            print(f"Doing {dP}-sim")
+        for dp in pressure_drops:
+            print(f"Doing {dp}-sim")
 
-            if hdf5.has_dP_sim(save_path, dP):
+            if hdf5.has_dp_sim(save_path, dp):
                 if options.force:
                     print("  Simulation detected! Results will be overwritten.")
                 else:
@@ -168,11 +168,11 @@ def main():
                     continue
 
             if options.bigmode:
-                S = save_path
+                solid = save_path
             else:
-                S = hdf5.get_S(save_path)
+                solid = hdf5.get_s(save_path)
 
-            sol = Solver(S, dP, sol_method=options.solver)
+            sol = Solver(solid, dp, sol_method=options.solver)
 
             if options.mono:
                 sol.monolithic_solve()

@@ -1,9 +1,7 @@
 import logging
 import warnings
-from numpy import ( all, allclose, arange, array, average, concatenate,
-                    c_, cumsum, dot, float64, inf,  int64, logical_and,
-                    logical_not, logical_or, mean, memmap, ones, r_, roll, sqrt,
-                    take, where, zeros, zeros_like )
+from numpy import ( array, concatenate,
+                    float64, inf,  int64, logical_not, mean, memmap, roll, zeros )
 import time
 from socket import gethostname
 
@@ -20,10 +18,10 @@ class Solver():
 
     Required Arguments:
     'solid' is an n-dimensional array describing geometry of the problem
-    'dP' is list/tuple of pressure difference across
+    'dp' is list/tuple of pressure difference across
     the n-th dimension of the domain"
     '''
-    def __init__(self, solid_or_filename, dP, sol_method="default"):
+    def __init__(self, solid_or_filename, dp, sol_method="default"):
         # Log the starting time
         self.start_time = time.time()
 
@@ -32,13 +30,13 @@ class Solver():
         self.cpuCount = 1
 
         logger.debug("Solver Instantiated")
-        
-        # Default direction of pressure drop
-        self.dP = dP
 
-        # I left this in here so you can manually 
+        # Default direction of pressure drop
+        self.dp = dp
+
+        # I left this in here so you can manually
         # disable Biot number based acceleration if desired
-        self.useBi = True  
+        self.use_bi = True
 
         if sol_method == "default":
             self.method = "spsolve"
@@ -46,7 +44,7 @@ class Solver():
             self.method = sol_method
 
         # Iteration count
-        self.I = 0
+        self.iteration_count = 0
 
         ################################################################
         # Solver Internal Stuff ## Degree of Freedom Grids and Numbers #
@@ -54,19 +52,19 @@ class Solver():
         
         # the ndarray of solid
         if hasattr(solid_or_filename, "shape"):
-            self.S = solid_or_filename
-            self.shape = self.S.shape
-            self.ndim  = len(self.S.shape)
+            self.solid = solid_or_filename
+            self.shape = self.solid.shape
+            self.ndim = len(self.solid.shape)
 
             # Pressure (cell centered)
             # Get the P degrees of freedom
-            self.P_dof_grid = ndim_eq.p_dof( self.S )
+            self.p_dof_grid = ndim_eq.p_dof(self.solid)
 
             # Velocities (face centered)
-            self.vel_dof_grids = ndim_eq.velocity_dofs( self.S )
-            self.bigMode = False
+            self.vel_dof_grids = ndim_eq.velocity_dofs(self.solid)
+            self.big_mode = False
 
-        elif type(solid_or_filename) == str:
+        elif isinstance(solid_or_filename, str):
             if self.myID == 0:
                 self.setup_dof_cache_faster(solid_or_filename)
             
@@ -76,9 +74,9 @@ class Solver():
             self.sync()
 
             self.import_dof_cache()
-            self.bigMode = True
+            self.big_mode = True
 
-        self.P_dof_num  = self.P_dof_grid.max() + 1
+        self.p_dof_num = self.p_dof_grid.max() + 1
         self.vel_dof_nums  = [int(grid.max() + 1) for grid in self.vel_dof_grids]
         self.sync("DOF Config Completion Sync")
 
@@ -102,19 +100,19 @@ class Solver():
 
         ################# 
         # Stupid checks #
-        #################        
-        if self.ndim != len(self.dP):
-            raise ValueError(f"Solid Array and Pressure Drop do not have matching dimensions:\n\tself.ndim:{self.ndim}\n\t{self.dP}")
+        #################
+        if self.ndim != len(self.dp):
+            raise ValueError(f"Solid Array and Pressure Drop do not have matching dimensions:\n\tself.ndim:{self.ndim}\n\t{self.dp}")
 
         #################
         # FYI Printouts #
         #################
         # DOF Number total
-        self.dof_number = sum(self.vel_dof_nums)  + self.P_dof_num
+        self.dof_number = sum(self.vel_dof_nums)  + self.p_dof_num
        
         # print some useful DOF debugging information:
         logger.info(f"Degree of freedom count: {self.dof_number}")
-        logger.info(f"\tPressure: {self.P_dof_num}")
+        logger.info(f"\tPressure: {self.p_dof_num}")
         for dim in range(self.ndim):
             logger.info(f"\tVelocity {dim}: {self.vel_dof_nums[dim]}")
 
@@ -122,7 +120,7 @@ class Solver():
         # DOF Grabbing Functions #
         ##########################
         # This returns the pressure DOF for a given point
-        self.pdp = lambda point: int( self.P_dof_grid[tuple(array(point) % array(self.shape))] )
+        self.pdp = lambda point: int( self.p_dof_grid[tuple(array(point) % array(self.shape))] )
         
         # This returns the velocity DOF for a given dimension and point
         self.nvd = lambda dim, point: int( self.vel_dof_grids[dim][tuple(array(point) % array(self.shape))] )        
@@ -138,22 +136,22 @@ class Solver():
         ###########
         # Vector shaped pressure and correction
         self.myP_dof_min = 0
-        self.myP_dof_max = self.P_dof_num - 1
+        self.myP_dof_max = self.p_dof_num - 1
 
         # Pressure
-        self.P_LHS = zeros( self.P_dof_num )
-        self.P_RHS = zeros( self.P_dof_num )
-        self.P_COR = zeros( self.P_dof_num )
-        self.PTEMP = zeros( self.P_dof_num )
+        self.P_LHS = zeros( self.p_dof_num )
+        self.P_RHS = zeros( self.p_dof_num )
+        self.P_COR = zeros( self.p_dof_num )
+        self.PTEMP = zeros( self.p_dof_num )
 
         # Biot number and Divergence have the same vector size/Map
-        self.Bi          = zeros( self.P_dof_num )
-        self.DIV_MULT    = zeros( self.P_dof_num )
+        self.bi          = zeros( self.p_dof_num )
+        self.DIV_MULT    = zeros( self.p_dof_num )
 
         # Numbers related to the divergence
-        self.last_abs_div= zeros( self.P_dof_num )
-        self.D_LIN       = zeros( self.P_dof_num )
-        self.ABS_D_LIN   = zeros( self.P_dof_num )
+        self.last_abs_div= zeros( self.p_dof_num )
+        self.D_LIN       = zeros( self.p_dof_num )
+        self.ABS_D_LIN   = zeros( self.p_dof_num )
 
         # So the convergence loop runs once before assessing that its done
         self.max_D       = inf
@@ -192,11 +190,11 @@ class Solver():
         # These lists are the ones you have to step through to cover
         # Each cpu's degrees of freedom 
         # DOF Points for P
-        self.Get_P_Iterator = lambda : ndimed.pruned_iterator(self.P_dof_grid, 
+        self.get_p_iterator = lambda : ndimed.pruned_iterator(self.p_dof_grid, 
                                                               self.myP_dof_min, 
                                                               self.myP_dof_max)
 
-        self.Get_V_Iterator = lambda axis: ndimed.pruned_iterator(self.vel_dof_grids[axis], 
+        self.get_v_iterator = lambda axis: ndimed.pruned_iterator(self.vel_dof_grids[axis], 
                                                                   self.myV_dof_min[axis], 
                                                                   self.myV_dof_max[axis])
         
@@ -222,9 +220,9 @@ class Solver():
         # Open the file to copy S from
         logger.info("Opening h5 file to read solid")
         source_h5 = open_file(s_filename)
-        S = source_h5.root.geometry.S[:]
+        solid = source_h5.root.geometry.S[:]
         logger.debug("Success!")
-        shape = S.shape
+        shape = solid.shape
         ndim = len(shape)
 
         # Write Memory Maps
@@ -240,17 +238,17 @@ class Solver():
         shape_map[:] = array(shape).astype(int64)[:]
         logger.info("Shape Done.")
         
-        # Assign S
-        s_memmap[:] = S[:].astype(int64)
-        logger.info("S Done.")
+        # Assign solid
+        s_memmap[:] = solid[:].astype(int64)
+        logger.info("Solid Done.")
 
         # Assign P's
-        p_memmap[:] = ndim_eq.p_dof(S).astype(int64)
+        p_memmap[:] = ndim_eq.p_dof(solid).astype(int64)
         logger.info("P Done.")
 
         # Assign V's
         for axis, v_mmap in enumerate(v_memmaps):
-            v_mmap[:] = ndim_eq.velocity_dof(S, axis).astype(int64)
+            v_mmap[:] = ndim_eq.velocity_dof(solid, axis).astype(int64)
         logger.info("VS Done.")
         logger.info("Loaded Maps . . .  Flushing.")
         # Flush All to disk.
@@ -269,19 +267,19 @@ class Solver():
         self.shape = tuple(sm[:])
         self.ndim = len(self.shape)
 
-        self.S  = memmap("S.mem", dtype="int64", mode='r', shape=self.shape)
+        self.solid  = memmap("S.mem", dtype="int64", mode='r', shape=self.shape)
         logger.debug("\tSolid Done.")
 
 
-        self.P_dof_grid  = memmap("P.mem", dtype="int64", mode='r', shape=self.shape)
+        self.p_dof_grid  = memmap("P.mem", dtype="int64", mode='r', shape=self.shape)
         logger.debug("\tPressure Done.")
         self.vel_dof_grids = [ memmap(f"V{x}.mem", dtype="int64", mode='r', shape=self.shape) for x in range(self.ndim) ]
         logger.debug("\tVelocities Done.")
 
-    # Get the matrix product where Mx = b
-    def mat_mult(self, M, x, b):
+    # Get the matrix product where matrix @ x = b
+    def mat_mult(self, matrix, x, b):
         logger.debug("Matrix Multiply Called")
-        b[:] = M * x
+        b[:] = matrix * x
  
 
     def setup_matrices(self):
@@ -296,12 +294,12 @@ class Solver():
 
         from scipy.sparse import lil_matrix
         # Square Matrices
-        self.PM =   lil_matrix( (self.P_dof_num, self.P_dof_num ) )
+        self.PM =   lil_matrix( (self.p_dof_num, self.p_dof_num ) )
         self.VM = [ lil_matrix( (dof_count,      dof_count) ) for dof_count in self.vel_dof_nums ]
         # Rectangulars
-        self.DM = [ lil_matrix( (self.P_dof_num, dof_count) ) for dof_count in self.vel_dof_nums ]
-        self.ST = [ lil_matrix( (self.P_dof_num, dof_count) ) for dof_count in self.vel_dof_nums ]
-        self.GM = [ lil_matrix( (dof_count, self.P_dof_num) ) for dof_count in self.vel_dof_nums ]
+        self.DM = [ lil_matrix( (self.p_dof_num, dof_count) ) for dof_count in self.vel_dof_nums ]
+        self.solidT = [ lil_matrix( (self.p_dof_num, dof_count) ) for dof_count in self.vel_dof_nums ]
+        self.GM = [ lil_matrix( (dof_count, self.p_dof_num) ) for dof_count in self.vel_dof_nums ]
             
         #################
         # Fill Matrices #
@@ -309,23 +307,23 @@ class Solver():
 
         # Setup the Pressure Matrix
         logger.info("Filling the Pressure Poisson Matrix")
-        self._fill_PM()
+        self._fill_pm()
 
         # Setup the n Velocity, divergence, and gradient matrices
         for dim in range(self.ndim):
             logger.info(f"Setting up Velocity Poisson Matrix ({dim})")
-            self._fill_VM(dim)
+            self._fill_vm(dim)
 
             logger.info(f"Calculating Divergence/Biot Matrix ({dim})")
-            self._fill_DM(dim)
+            self._fill_dm(dim)
 
             logger.info(f"Calculating Gradient Matrix ({dim})")
-            self._fill_GM(dim)
+            self._fill_gm(dim)
 
         # Due to the symbolic nature of these, they are done
         # All at once
         logger.info("Calculating S-Terms")
-        self._fill_S()
+        self._fill_s()
 
         ##############################
         # Convert/Finialize Matrices #
@@ -334,30 +332,30 @@ class Solver():
         self.PM = self.PM.tocsr()
         self.VM = [m.tocsr() for m in self.VM]
         self.DM = [m.tocsr() for m in self.DM]
-        self.ST = [m.tocsr() for m in self.ST]
+        self.solidT = [m.tocsr() for m in self.solidT]
         self.GM = [m.tocsr() for m in self.GM]
 
 
 
     # scipy spsolve
-    def _spsolve_P(self, *args, **kwargs):
+    def _spsolve_p(self, *args, **kwargs):
         self.P_LHS = self.spsolve( self.PM, self.P_RHS )
-    def _spsolve_V(self, dim, *args, **kwargs):
+    def _spsolve_v(self, dim, *args, **kwargs):
         self.V_LHS[dim] = self.spsolve( self.VM[dim], self.V_RHS[dim] )
 
     # scipy splu
-    def _splu_P(self, *args, **kwargs):
+    def _splu_p(self, *args, **kwargs):
         self.P_LHS = self.PM_LU.solve(self.P_RHS)
-    def _splu_V(self, dim, *args, **kwargs):
+    def _splu_v(self, dim, *args, **kwargs):
         self.V_LHS[dim] = self.VM_LU[dim].solve(self.V_RHS[dim])
 
     # scipy bicgstab
-    def _bicgstab_P(self, *args, **kwargs):
+    def _bicgstab_p(self, *args, **kwargs):
         result, info = self.bicgstab(self.PM, self.P_RHS)
         if info != 0:
             logger.warning(f"bicgstab P solve did not converge (info={info})")
         self.P_LHS = result
-    def _bicgstab_V(self, dim, *args, **kwargs):
+    def _bicgstab_v(self, dim, *args, **kwargs):
         result, info = self.bicgstab(self.VM[dim], self.V_RHS[dim])
         if info != 0:
             logger.warning(f"bicgstab V[{dim}] solve did not converge (info={info})")
@@ -373,14 +371,14 @@ class Solver():
         indices = jnp.stack([jnp.array(coo.row), jnp.array(coo.col)], axis=1)
         return BCOO((jnp.array(coo.data), indices), shape=coo.shape)
 
-    def _jax_solve_P(self, *args, **kwargs):
+    def _jax_solve_p(self, *args, **kwargs):
         import numpy
         import jax.numpy as jnp
         rhs = jnp.array(self.P_RHS)
         result, info = self._jax_solve_fn(self.PM_JAX, rhs)
         self.P_LHS = numpy.array(result)
 
-    def _jax_solve_V(self, dim, *args, **kwargs):
+    def _jax_solve_v(self, dim, *args, **kwargs):
         import numpy
         import jax.numpy as jnp
         rhs = jnp.array(self.V_RHS[dim])
@@ -400,7 +398,7 @@ class Solver():
             logger.info(f"VM ({dim}): {mat_nnz(self.VM[dim])}")
             logger.info(f"GM ({dim}): {mat_nnz(self.GM[dim])}")
             logger.info(f"DM ({dim}): {mat_nnz(self.DM[dim])}")
-            logger.info(f"ST ({dim}): {mat_nnz(self.ST[dim])}")
+            logger.info(f"ST ({dim}): {mat_nnz(self.solidT[dim])}")
 
         logger.info("Vector Norm Check")
         logger.info(f"P_COR: {vec_nnz(self.P_COR)}")
@@ -422,7 +420,7 @@ class Solver():
         if self.method == "nobi":
             logger.debug("Bi Number disabled.")
             # Set the ignore Bi, flag and use spsolve
-            self.useBi = False
+            self.use_bi = False
             self.method = 'spsolve'
 
         # spsolve is the slowest but has no additional memory overhead 
@@ -437,12 +435,12 @@ class Solver():
             for dim in range(self.ndim):
                 self.VM[dim] = self.VM[dim].tocsr()
 
-            self.SOLVE_P = self._spsolve_P
-            self.SOLVE_V = self._spsolve_V
+            self.SOLVE_P = self._spsolve_p
+            self.SOLVE_V = self._spsolve_v
 
             try:
-                from scipy.sparse.linalg import splu
-            except:
+                from scipy.sparse.linalg import splu  # noqa: F401
+            except ImportError:
                 warnings.warn("You do not seem to have UMFpack installed; the use of spsolve will be _very_ slow!")
 
         # This sparse LU decomposition. Good for systems with any version of scipy
@@ -464,8 +462,8 @@ class Solver():
                 logger.debug(f"\t Velocity {dim} -splu")
                 self.VM_LU[dim] = splu(self.VM[dim])
 
-            self.SOLVE_P = self._splu_P
-            self.SOLVE_V = self._splu_V
+            self.SOLVE_P = self._splu_p
+            self.SOLVE_V = self._splu_v
 
         # Iterative BiCGSTAB solver - good for large systems
         elif self.method == 'bicgstab':
@@ -477,8 +475,8 @@ class Solver():
             for dim in range(self.ndim):
                 self.VM[dim] = self.VM[dim].tocsr()
 
-            self.SOLVE_P = self._bicgstab_P
-            self.SOLVE_V = self._bicgstab_V
+            self.SOLVE_P = self._bicgstab_p
+            self.SOLVE_V = self._bicgstab_v
 
         # JAX GPU-accelerated iterative solvers
         elif self.method in ('jax_bicgstab', 'jax_gmres'):
@@ -501,8 +499,8 @@ class Solver():
                 self.VM_JAX[dim] = self._scipy_to_jax_bcoo(self.VM[dim])
                 logger.debug(f"Cached JAX velocity matrix {dim}")
 
-            self.SOLVE_P = self._jax_solve_P
-            self.SOLVE_V = self._jax_solve_V
+            self.SOLVE_P = self._jax_solve_p
+            self.SOLVE_V = self._jax_solve_v
 
         else:
             logger.warning(f"Solver type '{self.method}' not recognized!!!!")
@@ -516,18 +514,18 @@ class Solver():
         # Velocity RHS's Correction #
         #############################
         for dim in range(self.ndim):
-            for point in self.Get_V_Iterator(dim):
+            for point in self.get_v_iterator(dim):
                 # This decides when the RHS of the velocity equation
                 # requires a addition of the pressure drop
                 # This correction comes from the PBC's and the gradient of the pressure (hence the negative)
                 if (point[dim] == 0):
                     vdof = self.nvd(dim, point)
-                    self.V_COR[dim][vdof] -= self.dP[dim]
+                    self.V_COR[dim][vdof] -= self.dp[dim]
 
         ###########################
         # Pressure RHS Correction #
         ###########################
-        for point in self.Get_P_Iterator():
+        for point in self.get_p_iterator():
             pdof = self.pdp(point)
 
             # This Pins the pressure solution for the 0th DOF
@@ -549,7 +547,7 @@ class Solver():
                 # If point is at the near edge AND
                 # Isn't adjacent to solid (normal to that edge)
                 if (point[dim] == 0) and (self.pdp(test_back) != -1):
-                    point_pressure_correction -= self.dP[dim]
+                    point_pressure_correction -= self.dp[dim]
 
                 # Shift the Point Backward in this axis
                 shifted_point = list(point)
@@ -560,16 +558,16 @@ class Solver():
                 # If point is at the far edge AND
                 # Isn't adjacent to solid (normal to that edge)
                 if (point[dim] == self.shape[dim] - 1) and (self.pdp(fore_point) != -1):
-                    point_pressure_correction += self.dP[dim]
+                    point_pressure_correction += self.dp[dim]
 
             self.P_COR[pdof] += point_pressure_correction
 
         # Flag the BC's as setup
         self.bc_is_setup = True
             
-    def _fill_PM(self):
+    def _fill_pm(self):
         # ndimed.iter_grid only gits points for each proc.
-        for point in self.Get_P_Iterator():
+        for point in self.get_p_iterator():
             dof = self.pdp(point)
             
             # #ignore non-degrees of freedom (no longer necessary?)
@@ -614,9 +612,9 @@ class Solver():
                 self.PM[dof,c] = v
 
 
-    def _fill_VM( self, axis ):
+    def _fill_vm( self, axis ):
         #Define self.UM
-        for point in self.Get_V_Iterator(axis):
+        for point in self.get_v_iterator(axis):
             dof = self.nvd(axis, point)
             # #ignore non-degrees of freedom
             # if dof < 0:
@@ -643,29 +641,29 @@ class Solver():
             for c, v in zip(col, val):
                 self.VM[axis][dof,c] = v
 
-    def _fill_DM(self, dim):
+    def _fill_dm(self, dim):
         # Matrix associated with this dimension
-        this_DM = self.DM[dim]
+        this_dm = self.DM[dim]
         rolled_v_dof_grid = roll(self.vel_dof_grids[dim], -1, axis=dim)
 
         # Iterate over the grid
-        for point in self.Get_P_Iterator():
+        for point in self.get_p_iterator():
             # P Degree of freedom
             pd = self.pdp(point)
 
             # Neg is flowing in
             dof = self.vel_dof_grids[dim][point]
             if dof >= 0:
-                this_DM[pd, dof] = -1
+                this_dm[pd, dof] = -1
 
             # Positive is flowing out
             dof = rolled_v_dof_grid[point]
             if dof >= 0:
-                this_DM[pd, dof] = 1
+                this_dm[pd, dof] = 1
         
-    def _fill_S(self):
+    def _fill_s(self):
         # Iterate over the grid
-        for point in self.Get_P_Iterator():
+        for point in self.get_p_iterator():
             # Find the DOF for the current pressure cell
             pd = self.pdp(point)
 
@@ -674,33 +672,33 @@ class Solver():
                 continue
 
             # If completely liquid . . . Laplace equation . . . no source
-            cfg_code = ndim_eq.config_code(self.S, point)
+            cfg_code = ndim_eq.config_code(self.solid, point)
 
-            # assert ndim_eq.config_code(self.S, point) == ndim_eq.new_config_code(self.S, point)
+            # assert ndim_eq.config_code(self.solid, point) == ndim_eq.new_config_code(self.solid, point)
 
             if cfg_code == 0:
                 continue
             
             # This will return a list of n equations
-            point_equations = ndim_eq.s_term(self.P_dof_grid, self.vel_dof_grids, point)
+            point_equations = ndim_eq.s_term(self.p_dof_grid, self.vel_dof_grids, point)
 
             # For each dimension (equation) populate the corresponding matrix row
             for dim, eq in enumerate(point_equations):
                 for dofn, coeff in eq.items():
-                    self.ST[dim][pd, dofn] = coeff
+                    self.solidT[dim][pd, dofn] = coeff
 
-    def _fill_GM(self, dim):
-        rolled_p = roll(self.P_dof_grid, 1, axis=dim)
+    def _fill_gm(self, dim):
+        rolled_p = roll(self.p_dof_grid, 1, axis=dim)
 
         vals_added = 0
-        for point in ndimed.full_iter_grid(self.P_dof_grid):
+        for point in ndimed.full_iter_grid(self.p_dof_grid):
             vel_dof = self.vel_dof_grids[dim][point]
 
             # Still Necessary!
             if vel_dof < 0:
                 continue
 
-            p1 = self.P_dof_grid[point]
+            p1 = self.p_dof_grid[point]
             if p1 >= 0:
                 self.GM[dim][vel_dof, p1] = 1
                 vals_added += 1
@@ -710,7 +708,7 @@ class Solver():
                 self.GM[dim][vel_dof, p2] = -1
                 vals_added += 1
 
-    def update_D(self):
+    def update_d(self):
         # Track the previous abs values
         self.last_abs_div[:] = self.ABS_D_LIN
 
@@ -718,7 +716,8 @@ class Solver():
         # If this happend 5x in a row . . .
         if self.last_max_D == self.max_D and self.max_D != inf:
             self.bork_count += 1
-            if self.bork_count >= 5: raise ValueError("WTF")
+            if self.bork_count >= 5:
+                raise ValueError("WTF")
         else:
             self.bork_count = 0
         
@@ -751,13 +750,9 @@ class Solver():
         from scipy.sparse import lil_matrix
         self.MM = lil_matrix((self.dof_number, self.dof_number))
 
-        # TODO: using coo you could just add offsets to all the matrices 
-        # involved and cat them together making the setup 
+        # TODO: using coo you could just add offsets to all the matrices
+        # involved and cat them together making the setup
         # faster etc . . .
-
-        # DOF numbers
-        pdof = self.P_dof_num
-        vns = self.vel_dof_nums #[ndim]
 
         logger.debug("\tAdding Pressure Laplace")
         # Laplace Matrices
@@ -796,14 +791,14 @@ class Solver():
         yo = self.PM.shape[0]
         for dim in range(self.ndim):
             logger.info(f"\tAdding S-terms ({dim})", 2)
-            s_mat = self.ST[dim]
+            s_mat = self.solidT[dim]
             xi, yi = s_mat.nonzero()
             for x, y in zip(xi, yi):
                 self.MM[x + xo, y + yo] = -s_mat[x, y] / self.h
             yo += self.VM[dim].shape[0]
 
         logger.debug("\tAssembling RHS")
-        self.MM_rhs = zeros(self.P_dof_num)
+        self.MM_rhs = zeros(self.p_dof_num)
         self.MM_rhs[0:len(self.P_COR)] = self.P_COR
 
         for dim in range(self.ndim):
@@ -828,7 +823,7 @@ class Solver():
             raise ValueError
         self.solve_time = time.time() - self.solve_start
 
-        self.P_LHS = ans[0:self.P_dof_num]
+        self.P_LHS = ans[0:self.p_dof_num]
 
         current_offset = len(self.P_LHS)
         for dim in range(self.ndim):
@@ -836,20 +831,20 @@ class Solver():
             current_offset += self.vel_dof_nums[dim]
 
     # The Bi number based acceleration
-    # TODO: cleanup this, make it actual Bi instead of multiple of the divergence
-    def update_Bi(self, dn_mult = 0.05, up_mult = 1.001, start_Bi=0.0000005, starting_I = 10 ):
+    # TODO: cleanup this, make it actual bi instead of multiple of the divergence
+    def update_bi(self, dn_mult=0.05, up_mult=1.001, start_bi=0.0000005, starting_iter=10):
         '''This routine does a simple optimization on the Biot number of the Pressure Solution
         i.e. adjusting of the element wise paramaters accelerates convergence by reducing
         the system stiffness.  If the cell-wise divergence goes up, it increases the stringency of BC's at that point
         otherwise it lets it loosen slightly.
-        The default paramaters are _extremely_ conservative, but more aggressive setting can vastly accelerate convergence. 
+        The default paramaters are _extremely_ conservative, but more aggressive setting can vastly accelerate convergence.
         Selection of understable paramaters can lead to irreversable divergence, so adjust with care'''
         logger.info("Starting Bi Optimization")
         mx = 1
-        if   self.I  < starting_I:
+        if self.iteration_count < starting_iter:
             self.DIV_MULT[:] = 0
-        elif self.I == starting_I:
-            self.DIV_MULT[:] = start_Bi
+        elif self.iteration_count == starting_iter:
+            self.DIV_MULT[:] = start_bi
         else:
             # True for dof's who have a lower divergence this round than last
             # Epetra Vectors dont Support fancy slicing, so
@@ -895,7 +890,7 @@ class Solver():
         # This is the Bi contribution
         self.P_RHS[:] = self.DIV_MULT * self.D_LIN
         for d in range(self.ndim):
-            self.mat_mult(self.ST[d], self.V_LHS[d], self.PTEMP)
+            self.mat_mult(self.solidT[d], self.V_LHS[d], self.PTEMP)
             self.P_RHS[:] = self.P_RHS[:] + self.PTEMP
 
         # Divide by h and add PBC pressure corrections
@@ -920,49 +915,49 @@ class Solver():
         # Sync
         self.sync("End of Iteration!")
         # Increment the iteration count
-        self.I += 1
+        self.iteration_count += 1
 
     def regrid(self):
         '''Convert the linear-algebra formed vectors back into familiar field varibles'''
         # Make the 2d/3d arrays to hold the results
-        self.P = zeros(self.S.shape, dtype=float64)
+        self.pressure = zeros(self.solid.shape, dtype=float64)
 
         # One face centered velocity grid for each Velocity Axis
-        self.V_GRIDS = [ zeros( self.shape) for dim in range(self.ndim) ]
+        self.v_grids = [zeros(self.shape) for dim in range(self.ndim)]
 
-        # Convenience handles (P, u, v, w, x)
-        for name, dim in zip(['u','v','w','x'], range(self.ndim)):
-            setattr(self, name, self.V_GRIDS[dim])
+        # Convenience handles (u, v, w, x)
+        for name, dim in zip(['u', 'v', 'w', 'x'], range(self.ndim)):
+            setattr(self, name, self.v_grids[dim])
 
         # Put them back in their respective arrays
-        self.assign_P_to_obj(self.P)
+        self.assign_p_to_obj(self.pressure)
         for axis in range(self.ndim):
-            self.assign_V_to_obj( axis, self.V_GRIDS[axis] )
+            self.assign_v_to_obj( axis, self.v_grids[axis] )
     
     def ungrid(self):
-        '''Take the grid-wise P, u, v, etc and put into the 
+        '''Take the grid-wise pressure, u, v, etc and put into the
         linear forms used during matrix solution
         Useful if you want to seed a solution into the solver'''
 
         # There is a classier way to do this with "take" from numpy
-        for point in self.P_points_list:
+        for point in self.p_points_list:
             pdof = self.pdp(point)
-            self.P_LHS[pdof] = self.P[point]
+            self.P_LHS[pdof] = self.pressure[point]
 
         for axis in range(self.ndim):
-            for point in self.V_points_list[axis]:
-                dof = self.nvd( axis, point )
-                self.V_LHS[axis][dof] = self.V_GRIDS[axis][point]
+            for point in self.v_points_list[axis]:
+                dof = self.nvd(axis, point)
+                self.V_LHS[axis][dof] = self.v_grids[axis][point]
 
-    def assign_P_to_obj(self, obj):
+    def assign_p_to_obj(self, obj):
         '''Used for saving pressure results to HDF5.'''
-        for point in self.Get_P_Iterator():
+        for point in self.get_p_iterator():
             dof = self.pdp(point)
             obj[point] = self.P_LHS[dof]
 
-    def assign_V_to_obj(self, axis, obj):
+    def assign_v_to_obj(self, axis, obj):
         '''Used for saving velocity results to HDF5.'''
-        for point in self.Get_V_Iterator(axis):
+        for point in self.get_v_iterator(axis):
             dof = self.nvd(axis, point)
             obj[point] = self.V_LHS[axis][dof]
 
@@ -972,10 +967,10 @@ class Solver():
         self.force_la_setup()
         self.force_bc_setup()
 
-        self.update_D()
+        self.update_d()
         # If the current solution is valid
         # (and it isn't the first iteration), break out
-        if self.I != 0 and self.max_D < stopping_div:
+        if self.iteration_count != 0 and self.max_D < stopping_div:
             return
 
         # Start the timer
@@ -986,13 +981,14 @@ class Solver():
 
             logger.debug("\tUpdating Divergence" )
             # Update the divergence and max divergence
-            self.update_D()
+            self.update_d()
 
             # Update Bi
-            if use_biot: self.update_Bi()
+            if use_biot:
+                self.update_bi()
 
             # Print some status Crap
-            logger.info(f"Iteration:{self.I}, Max Divergence:{self.max_D:e}")
+            logger.info(f"Iteration:{self.iteration_count}, Max Divergence:{self.max_D:e}")
 
             # If it is time to break, do so
             if self.max_D < stopping_div:
@@ -1000,13 +996,13 @@ class Solver():
                 break
 
             # Alternative breaking criteria: exceeding iteration count
-            if self.I >= max_iter:
+            if self.iteration_count >= max_iter:
                 raise ValueError("Max iterations exceeded")
 
-    def getMetaDict(self):
+    def get_meta_dict(self):
         '''This function returns a dictionary of metadata information about the solver.
         It is only 'valid' after one or more solution methods have been used'''
-        ret_dict = {"Iteration_Count":self.I,
+        ret_dict = {"Iteration_Count":self.iteration_count,
                     "P_and_V_DOF_Number":self.dof_number,
                     "Setup_Time":self.setup_time,
                     "Converge_Time":self.solve_time,
