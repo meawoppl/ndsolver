@@ -253,8 +253,8 @@ def s_term_matricies(pdof, udof, vdof, zero_rows = [0]):
     udofs = udof.max() + 1
     vdofs = vdof.max() + 1
 
-    U_RHS_M = sparse.lil_matrix( (udofs, pdofs) )
-    V_RHS_M = sparse.lil_matrix( (vdofs, pdofs) )
+    u_rhs_m = sparse.lil_matrix( (udofs, pdofs) )
+    v_rhs_m = sparse.lil_matrix( (vdofs, pdofs) )
 
     for x in range(pdof.shape[0]):
       for y in range(pdof.shape[1]):
@@ -273,12 +273,12 @@ def s_term_matricies(pdof, udof, vdof, zero_rows = [0]):
         u_eq, v_eq = s_term(udof, vdof, x, y)
 
         for dofn, coeff in u_eq.items():
-            U_RHS_M[ dofn, pd ] = coeff
+            u_rhs_m[ dofn, pd ] = coeff
 
         for dofn, coeff in v_eq.items():
-            V_RHS_M[ dofn, pd ] = coeff
+            v_rhs_m[ dofn, pd ] = coeff
 
-    return U_RHS_M.tocsc(), V_RHS_M.tocsc()
+    return u_rhs_m.tocsc(), v_rhs_m.tocsc()
 
 def div_matrices(p_dof_grid, u_dof_grid, v_dof_grid):
     # shape and locus correction
