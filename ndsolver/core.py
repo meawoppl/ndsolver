@@ -1,9 +1,7 @@
 import logging
 import warnings
-from numpy import ( all, allclose, arange, array, average, concatenate,
-                    c_, cumsum, dot, float64, inf,  int64, logical_and,
-                    logical_not, logical_or, mean, memmap, ones, r_, roll, sqrt,
-                    take, where, zeros, zeros_like )
+from numpy import ( array, concatenate,
+                    float64, inf,  int64, logical_not, mean, memmap, roll, zeros )
 import time
 from socket import gethostname
 
@@ -66,7 +64,7 @@ class Solver():
             self.vel_dof_grids = ndim_eq.velocity_dofs(self.solid)
             self.big_mode = False
 
-        elif type(solid_or_filename) == str:
+        elif isinstance(solid_or_filename, str):
             if self.myID == 0:
                 self.setup_dof_cache_faster(solid_or_filename)
             
@@ -437,12 +435,12 @@ class Solver():
             for dim in range(self.ndim):
                 self.VM[dim] = self.VM[dim].tocsr()
 
-            self.solidOLVE_P = self._spsolve_p
-            self.solidOLVE_V = self._spsolve_v
+            self.SOLVE_P = self._spsolve_p
+            self.SOLVE_V = self._spsolve_v
 
             try:
-                from scipy.sparse.linalg import splu
-            except:
+                from scipy.sparse.linalg import splu  # noqa: F401
+            except ImportError:
                 warnings.warn("You do not seem to have UMFpack installed; the use of spsolve will be _very_ slow!")
 
         # This sparse LU decomposition. Good for systems with any version of scipy
@@ -464,8 +462,8 @@ class Solver():
                 logger.debug(f"\t Velocity {dim} -splu")
                 self.VM_LU[dim] = splu(self.VM[dim])
 
-            self.solidOLVE_P = self._splu_p
-            self.solidOLVE_V = self._splu_v
+            self.SOLVE_P = self._splu_p
+            self.SOLVE_V = self._splu_v
 
         # Iterative BiCGSTAB solver - good for large systems
         elif self.method == 'bicgstab':
@@ -477,8 +475,8 @@ class Solver():
             for dim in range(self.ndim):
                 self.VM[dim] = self.VM[dim].tocsr()
 
-            self.solidOLVE_P = self._bicgstab_p
-            self.solidOLVE_V = self._bicgstab_v
+            self.SOLVE_P = self._bicgstab_p
+            self.SOLVE_V = self._bicgstab_v
 
         # JAX GPU-accelerated iterative solvers
         elif self.method in ('jax_bicgstab', 'jax_gmres'):
@@ -501,8 +499,8 @@ class Solver():
                 self.VM_JAX[dim] = self._scipy_to_jax_bcoo(self.VM[dim])
                 logger.debug(f"Cached JAX velocity matrix {dim}")
 
-            self.solidOLVE_P = self._jax_solve_p
-            self.solidOLVE_V = self._jax_solve_v
+            self.SOLVE_P = self._jax_solve_p
+            self.SOLVE_V = self._jax_solve_v
 
         else:
             logger.warning(f"Solver type '{self.method}' not recognized!!!!")
@@ -718,7 +716,8 @@ class Solver():
         # If this happend 5x in a row . . .
         if self.last_max_D == self.max_D and self.max_D != inf:
             self.bork_count += 1
-            if self.bork_count >= 5: raise ValueError("WTF")
+            if self.bork_count >= 5:
+                raise ValueError("WTF")
         else:
             self.bork_count = 0
         
@@ -751,13 +750,9 @@ class Solver():
         from scipy.sparse import lil_matrix
         self.MM = lil_matrix((self.dof_number, self.dof_number))
 
-        # TODO: using coo you could just add offsets to all the matrices 
-        # involved and cat them together making the setup 
+        # TODO: using coo you could just add offsets to all the matrices
+        # involved and cat them together making the setup
         # faster etc . . .
-
-        # DOF numbers
-        pdof = self.p_dof_num
-        vns = self.vel_dof_nums #[ndim]
 
         logger.debug("\tAdding Pressure Laplace")
         # Laplace Matrices
@@ -903,7 +898,7 @@ class Solver():
 
         # Solve the pressure Eq.
         logger.debug("\tSolving P")
-        self.solidOLVE_P()
+        self.SOLVE_P()
 
         ################################
         # Solve the Velocity Equations #
@@ -916,7 +911,7 @@ class Solver():
 
             # Solve the velocity Equation in the n'th dimension
             logger.debug(f"\tSolving V - {dim}")
-            self.solidOLVE_V(dim)
+            self.SOLVE_V(dim)
         # Sync
         self.sync("End of Iteration!")
         # Increment the iteration count
@@ -989,7 +984,8 @@ class Solver():
             self.update_d()
 
             # Update Bi
-            if use_biot: self.update_bi()
+            if use_biot:
+                self.update_bi()
 
             # Print some status Crap
             logger.info(f"Iteration:{self.iteration_count}, Max Divergence:{self.max_D:e}")

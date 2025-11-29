@@ -1,7 +1,7 @@
 from numpy import array, zeros, roll, \
                   logical_and, logical_or, cumsum, \
                   logical_not, int32, int64, ones, \
-                  ndenumerate, where, zeros_like
+                  ndenumerate, zeros_like
 
 from .equation import Equation
 from . import ndimed
@@ -261,7 +261,7 @@ def all_configs(solid):
     # Iterate over the grid
     for point in ndimed.iter_grid(solid):
         # Add the points config to the list
-        config_list.append( config_code(solid, x, y) )
+        config_list.append( config_code(solid, point) )
 
     # Return a unique set of numbers
     return set(config_list)
@@ -444,6 +444,7 @@ def s_term(pdof, grids, point):
 
 
 if __name__ == "__main__":
+    from .eq_solver import div_matrices
     sf = zeros((3,3))
     pdof  = p_dof(sf)
     grids = velocity_dofs(sf)

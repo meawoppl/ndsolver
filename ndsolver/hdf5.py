@@ -1,7 +1,7 @@
 import logging
 import time
 
-from tables import (open_file, Float32Col, Float64Atom, Int8Atom, IsDescription,
+from tables import (open_file, Float32Col, Float64Atom, IsDescription,
                     NoSuchNodeError, UInt8Atom)
 
 logger = logging.getLogger(__name__)
@@ -112,7 +112,6 @@ def has_dp_sim(filepath, dp):
     '''Check to see if a h5 file has a simulation for a given pressure drop . . .'''
     h5 = open_file(filepath, "a")
     sim_dim = dp_to_dim(dp)
-    sim_name = f"{sim_dim}_sim"
     try:
         h5.get_node(f"/simulations/{sim_dim}_sim")
         has_group = True
@@ -127,19 +126,22 @@ def has_dp_sim(filepath, dp):
 
 def get_dp_sim(h5, dp):
     sim_dim = dp_to_dim(dp)
-    sim_name = f"{sim_dim}_sim"
-
     return h5.get_node(f"/simulations/{sim_dim}_sim")
 
 def dp_to_dim(dp):
-    # Ugleeeee!
     ndim = len(dp)
-    if   ndim == 2 and dp == (1,0):   sim_dim = "x"
-    elif ndim == 2 and dp == (0,1):   sim_dim = "y"
-    elif ndim == 3 and dp == (1,0,0): sim_dim = "x"
-    elif ndim == 3 and dp == (0,1,0): sim_dim = "y"
-    elif ndim == 3 and dp == (0,0,1): sim_dim = "z"
-    else:                             sim_dim = str(dp)
+    if ndim == 2 and dp == (1, 0):
+        sim_dim = "x"
+    elif ndim == 2 and dp == (0, 1):
+        sim_dim = "y"
+    elif ndim == 3 and dp == (1, 0, 0):
+        sim_dim = "x"
+    elif ndim == 3 and dp == (0, 1, 0):
+        sim_dim = "y"
+    elif ndim == 3 and dp == (0, 0, 1):
+        sim_dim = "z"
+    else:
+        sim_dim = str(dp)
 
     return sim_dim
 

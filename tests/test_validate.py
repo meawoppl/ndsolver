@@ -1,6 +1,5 @@
-import numpy as np
-from numpy import (allclose, all, array, arctan2, around, byte, c_, dot,
-                   linspace, mgrid, ones, outer, pi, roll, sin, sqrt, zeros)
+from numpy import (allclose, all, array, arctan2, byte, c_, dot,
+                   linspace, mgrid, outer, pi, roll, sin, sqrt, zeros)
 from scipy import linalg
 from ndsolver.core import Solver
 from ndsolver.symbolic import ndim_eq
@@ -78,7 +77,7 @@ def test_2d(sol_method='default'):
 
    # Reading is threadsafe!
    h5 = tables.open_file("autotest.h5")
-   test_pressure = h5.root.simulations.x_sim.P[:]
+   _test_pressure = h5.root.simulations.x_sim.P[:]  # Read to verify file integrity
    h5.close()
 
    if not allclose(sol.pressure, correct_pressure):
@@ -117,7 +116,7 @@ def shift_test(sol_method='default'):
          sol.sync()
          # Reading is threadsafe!
          h5 = tables.open_file("autotest.h5")
-         test_pressure = h5.root.simulations.x_sim.P[:]
+         _test_pressure = h5.root.simulations.x_sim.P[:]  # Read to verify file integrity
          test_u = h5.root.simulations.x_sim.u[:]
          test_v = h5.root.simulations.x_sim.v[:]
          h5.close()
@@ -202,7 +201,6 @@ def helix():
 
 def test_all_2d_config(sol_method='default'):
     print("Now running all cell configurations:")
-    cfg_iter = []
     for x in range(1, 256):
         solid = ndim_eq.make_safe_config_test(x)
         print(f"Starting Config {x}")

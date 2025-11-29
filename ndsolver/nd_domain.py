@@ -5,7 +5,6 @@ import time
 
 import numpy as np
 from numpy import array, pi, sqrt, zeros
-from tables import open_file
 
 from . import hdf5
 
@@ -69,8 +68,6 @@ def random_pack_nd_points(aspect, nd_radius, feature_count):
             raise ValueError("Not really ND . . .")
 
     ndim = len(aspect)
-    squared_feat_size = nd_radius ** 2
-
     nd_volume = array(aspect).prod()
 
     # Dont wanna symbolic this . . .
@@ -169,7 +166,7 @@ def geom_to_h5(domain_shape, feature_count, nd_radius, out_filename=None, prefix
     logger.debug(f"{time.time() - t} seconds")
 
     # Generate the automatic name
-    if out_filename==None:
+    if out_filename is None:
         logger.info("Creating file name hash...")
         t = time.time()
         out_filename = os.path.join(prefix, name_file(solid_array, int( (1. / nd_radius) + 0.5), feature_count))
@@ -278,8 +275,6 @@ def semirandom_pack_nd_points(aspect, nd_radius, feature_count, flakeat=250000):
             raise ValueError("Not really ND . . .")
 
     ndim = len(aspect)
-    squared_feat_size = nd_radius ** 2
-
     nd_volume = array(aspect).prod()
 
     # Dont wanna symbolic this . . .

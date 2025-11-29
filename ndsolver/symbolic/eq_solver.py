@@ -1,4 +1,3 @@
-import numpy as np
 from numpy import array, zeros, roll, logical_and, logical_or, cumsum, logical_not, int64, ones
 from scipy import sparse
 
@@ -266,9 +265,6 @@ def s_term_matricies(pdof, udof, vdof, zero_rows = [0]):
         # This is here to prevent writing and equation for a pinned cell
         if pd in zero_rows:
             continue
-
-        ud = udof[x,y]
-        vd = vdof[x,y]
 
         u_eq, v_eq = s_term(udof, vdof, x, y)
 
