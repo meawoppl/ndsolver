@@ -1003,7 +1003,7 @@ class Solver():
             if self.I >= max_iter:
                 raise ValueError("Max iterations exceeded")
 
-    def getMetaDict(self):
+    def get_meta_dict(self):
         '''This function returns a dictionary of metadata information about the solver.
         It is only 'valid' after one or more solution methods have been used'''
         ret_dict = {"Iteration_Count":self.I,

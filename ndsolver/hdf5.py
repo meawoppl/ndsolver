@@ -20,14 +20,14 @@ allowed_meta_tags = ["P_and_V_DOF_Number",
                      "dP",
                      "Total_Time"]
 
-def forceGroup(h5, where, name, title):
+def force_group(h5, where, name, title):
     try:
         h5.get_node(where, name=name)
     except NoSuchNodeError:
         h5.create_group(where, name, title)
     return h5.get_node(where, name=name)
 
-def forceCArray(h5, where, name, atom, shape, title):
+def force_carray(h5, where, name, atom, shape, title):
     try:
         h5.get_node(where, name=name)
     except NoSuchNodeError:
@@ -46,12 +46,12 @@ def write_S(path, S):
     # Open h5
     h5 = open_file(path,'a')
     # Create groups if necessary
-    geom = forceGroup(h5, "/", "geometry", 'details of the input geometry')
+    geom = force_group(h5, "/", "geometry", 'details of the input geometry')
 
     # Setup CArray
     solid_atom = UInt8Atom()            # Binary, but whatever.
     solid_title = 'solid/liquid indicator array'
-    solidCarray = forceCArray(h5, geom, "S", atom = solid_atom, shape=S.shape, title=solid_title)
+    solidCarray = force_carray(h5, geom, "S", atom = solid_atom, shape=S.shape, title=solid_title)
     
     # Copy the data into the CArray
     solidCarray[:] = S[:]
@@ -68,7 +68,7 @@ def write_geometry(filename, points, radaii):
 
     # Open the file
     h5 = open_file(filename, 'a')
-    geom = forceGroup(h5, "/",  "geometry", 'details of the input geometry')
+    geom = force_group(h5, "/",  "geometry", 'details of the input geometry')
     ndim = points.shape[1]
 
     # Cases for different dimensionality
@@ -111,7 +111,7 @@ def write_geometry(filename, points, radaii):
 def has_dP_sim(filepath, dP):
     '''Check to see if a h5 file has a simulation for a given pressure drop . . .'''
     h5 = open_file(filepath, "a")
-    sim_dim = dP_to_dim(dP)
+    sim_dim = dp_to_dim(dP)
     sim_name = f"{sim_dim}_sim"
     try:
         h5.get_node(f"/simulations/{sim_dim}_sim")
@@ -126,12 +126,12 @@ def has_dP_sim(filepath, dP):
 
 
 def get_dP_sim(h5, dP):
-    sim_dim  = dP_to_dim(dP)
+    sim_dim  = dp_to_dim(dP)
     sim_name = f"{sim_dim}_sim"
 
     return h5.get_node(f"/simulations/{sim_dim}_sim")
 
-def dP_to_dim(dP):
+def dp_to_dim(dP):
     # Ugleeeee!
     ndim = len(dP)
     if   ndim == 2 and dP == (1,0):   sim_dim  = "x"
@@ -149,10 +149,10 @@ def dP_to_dim(dP):
 
 def get_sim_p_vs(h5, dP, shape):
     # Get the simulation group, make a simulation group if necessary
-    sims = forceGroup(h5, "/", "simulations", 'Simulations details')
+    sims = force_group(h5, "/", "simulations", 'Simulations details')
 
     # the code below works . . . . urgle . . .
-    sim_dim = dP_to_dim(dP)
+    sim_dim = dp_to_dim(dP)
     sim_name = f"{sim_dim}_sim"
     
     ###########################
@@ -161,10 +161,10 @@ def get_sim_p_vs(h5, dP, shape):
     # For the simulation, make a group if necessary
     
     sim_title = f'periodic Stokes flow simulation for pressure drop in {sim_dim}-direction'
-    this_sim = forceGroup(h5, sims, sim_name, sim_title)
+    this_sim = force_group(h5, sims, sim_name, sim_title)
     
     # Make the P array if necessary
-    p = forceCArray(h5, this_sim, "P", Float64Atom(), shape, 'cell-centered pressure')
+    p = force_carray(h5, this_sim, "P", Float64Atom(), shape, 'cell-centered pressure')
     
     # Collect the velocity carrays in this
     vs = []
@@ -181,7 +181,7 @@ def get_sim_p_vs(h5, dP, shape):
 
         # if the array does not exist, make it
         v_title = f'{dn}-face-centered {dn}-component of velocity'
-        v_Carray = forceCArray(h5, this_sim, v_name, Float64Atom(), shape, v_title)
+        v_Carray = force_carray(h5, this_sim, v_name, Float64Atom(), shape, v_title)
         vs.append(v_Carray)
 
     return this_sim, p, vs
@@ -206,7 +206,7 @@ def write_meta(save_path, solver):
     h5 = open_file(save_path, "a")
     sim, p, vs = get_sim_p_vs(h5, solver.dP, solver.shape)
 
-    wmd(sim, solver.getMetaDict())
+    wmd(sim, solver.get_meta_dict())
 
     h5.flush()
     h5.close()

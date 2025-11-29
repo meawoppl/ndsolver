@@ -3,7 +3,7 @@ from numpy import array, zeros, roll, \
                   logical_not, int32, int64, ones, \
                   ndenumerate, where, zeros_like
 
-from .Equation import Equation
+from .equation import Equation
 from . import ndimed
 
 def ndcodex(dim):

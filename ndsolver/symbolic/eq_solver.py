@@ -2,7 +2,7 @@ import numpy as np
 from numpy import array, zeros, roll, logical_and, logical_or, cumsum, logical_not, int64, ones
 from scipy import sparse
 
-from .Equation import Equation
+from .equation import Equation
 
 global codex
 codex = array([[  0,  1,  2 ],
